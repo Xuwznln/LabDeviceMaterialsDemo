@@ -108,7 +108,7 @@ jobs:
           uv pip install pywinauto git+https://github.com/Xuwznln/pylabrobot.git
           uv pip install pytest -e .ci/installer-core
           UNILABOS_BASICCONFIG_BACKEND=hostlink \
-            unilab package install "https://github.com/$DEMO_REPOSITORY" --ref "$DEMO_REF"
+            unilab package install "git+https://github.com/$DEMO_REPOSITORY@$DEMO_REF"
           uv pip install -e .ci/unilabos
           cd "$RUNNER_TEMP"
           python - <<'PY'
