@@ -105,7 +105,7 @@ jobs:
             --cmake-args -DBUILD_TESTING=OFF
           source .ci/install/unilabos_msgs/setup.bash
           uv pip install -r .ci/unilabos/unilabos/utils/requirements.txt
-          uv pip install pywinauto git+https://github.com/Xuwznln/pylabrobot.git
+          uv pip install pywinauto git+https://github.com/Xuwznln/pylabrobot.git@6285d662effa972be97a781ba7493553f2ba94ee
           uv pip install pytest -e .ci/installer-core
           UNILABOS_BASICCONFIG_BACKEND=hostlink \
             unilab package install "git+https://github.com/$DEMO_REPOSITORY@$DEMO_REF"
