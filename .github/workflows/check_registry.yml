@@ -1,0 +1,151 @@
+name: Dual Backend Smoke
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # GitHub cron 使用 UTC；00:00 UTC = 北京时间 08:00。
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+env:
+  STABLE_CORE_REF: 6ea0026f7953dbe8e877f4ee5e4e93a8bd9819ab
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      core_sha: ${{ steps.core.outputs.sha }}
+      should_run: ${{ steps.decision.outputs.should_run }}
+    steps:
+      - name: Resolve stable or latest dev Core SHA
+        id: core
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            sha="$(git ls-remote https://github.com/deepmodeling/Uni-Lab-OS.git refs/heads/dev | awk '{print $1}')"
+          else
+            sha="$STABLE_CORE_REF"
+          fi
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Check whether this dev SHA already passed
+        id: dev-cache
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/unilab-dev-tested
+          key: site-demo-dev-smoke-${{ steps.core.outputs.sha }}
+      - name: Decide whether runtime smoke is needed
+        id: decision
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" && "${{ steps.dev-cache.outputs.cache-hit }}" == "true" ]]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "UniLabOS dev ${{ steps.core.outputs.sha }} already passed; skipping."
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  smoke:
+    needs: prepare
+    if: needs.prepare.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: 1
+      ROS_DISTRO: jazzy
+      DEMO_REPOSITORY: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+      DEMO_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+    steps:
+      - uses: actions/checkout@v6
+      - name: Checkout the selected Uni-Lab-OS runtime
+        uses: actions/checkout@v6
+        with:
+          repository: deepmodeling/Uni-Lab-OS
+          ref: ${{ needs.prepare.outputs.core_sha }}
+          path: .ci/unilabos
+      - name: Checkout the installer-capable Uni-Lab-OS CLI
+        uses: actions/checkout@v6
+        with:
+          repository: deepmodeling/Uni-Lab-OS
+          ref: ${{ env.STABLE_CORE_REF }}
+          path: .ci/installer-core
+      - uses: conda-incubator/setup-miniconda@v4
+        with:
+          miniforge-version: latest
+          use-mamba: true
+          python-version: '3.12.13'
+          channels: conda-forge,robostack-jazzy
+          channel-priority: strict
+          activate-environment: unilab
+          auto-update-conda: false
+      - name: Install ROS2 and build tools
+        shell: bash -el {0}
+        run: |
+          mamba install -n unilab --override-channels -c conda-forge -c robostack-jazzy \
+            conda-forge::numpy=2 conda-forge::uv conda-forge::colcon-common-extensions \
+            robostack-jazzy::ros2-distro-mutex=0.15 robostack-jazzy::ros-jazzy-ros-core \
+            robostack-jazzy::ros-jazzy-action-msgs robostack-jazzy::ros-jazzy-std-msgs \
+            robostack-jazzy::ros-jazzy-geometry-msgs robostack-jazzy::ros-jazzy-control-msgs \
+            robostack-jazzy::ros-jazzy-nav2-msgs robostack-jazzy::ros-jazzy-moveit-msgs \
+            robostack-jazzy::ros-jazzy-tf-transformations robostack-jazzy::ros-jazzy-tf2-ros \
+            robostack-jazzy::ros-jazzy-tf2-ros-py conda-forge::transforms3d -y
+      - name: Build unilabos_msgs and install runtime from GitHub
+        shell: bash -el {0}
+        run: |
+          colcon build --base-paths .ci/unilabos/unilabos_msgs \
+            --build-base .ci/build/unilabos_msgs \
+            --install-base .ci/install/unilabos_msgs \
+            --merge-install --packages-select unilabos_msgs \
+            --cmake-args -DBUILD_TESTING=OFF
+          source .ci/install/unilabos_msgs/setup.bash
+          uv pip install -r .ci/unilabos/unilabos/utils/requirements.txt
+          uv pip install pywinauto git+https://github.com/Xuwznln/pylabrobot.git
+          uv pip install pytest -e .ci/installer-core
+          UNILABOS_BASICCONFIG_BACKEND=hostlink \
+            unilab package install "https://github.com/$DEMO_REPOSITORY" --ref "$DEMO_REF"
+          uv pip install -e .ci/unilabos
+          cd "$RUNNER_TEMP"
+          python - <<'PY'
+          import importlib.metadata
+          import os
+          from pathlib import Path
+          import site_demo
+
+          module_path = Path(site_demo.__file__).resolve()
+          workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          assert not module_path.is_relative_to(workspace), module_path
+          distribution = importlib.metadata.distribution("site_demo")
+          print(f"installed site_demo {distribution.version}: {module_path}")
+          PY
+      - name: Validate registry and assert HostLink site contract
+        shell: bash -el {0}
+        run: |
+          source "$GITHUB_WORKSPACE/.ci/install/unilabos_msgs/setup.bash"
+          cd "$RUNNER_TEMP"
+          demo_package="$(python -c 'import pathlib, site_demo; print(pathlib.Path(site_demo.__file__).resolve().parent)')"
+          unilab --check_mode --skip_env_check --devices "$demo_package" --external_devices_only
+          python -m site_demo.smoke --backend hostlink --timeout 30
+      - name: Assert ROS2 site contract
+        shell: bash -el {0}
+        run: |
+          source "$GITHUB_WORKSPACE/.ci/install/unilabos_msgs/setup.bash"
+          cd "$RUNNER_TEMP"
+          python -m site_demo.smoke --backend ros2 --timeout 60
+      - name: Mark this dev SHA as successfully tested
+        if: ${{ success() && github.event_name == 'schedule' }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/unilab-dev-tested"
+          printf '%s\n' "${{ needs.prepare.outputs.core_sha }}" > "$RUNNER_TEMP/unilab-dev-tested/core-sha"
+      - name: Save successful dev compatibility marker
+        if: ${{ success() && github.event_name == 'schedule' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/unilab-dev-tested
+          key: site-demo-dev-smoke-${{ needs.prepare.outputs.core_sha }}

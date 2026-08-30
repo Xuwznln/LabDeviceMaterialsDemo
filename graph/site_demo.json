@@ -1,0 +1,108 @@
+{
+    "nodes": [
+        {
+            "id": "sample_rack",
+            "uuid": "9d2c7e40-5b1a-4f76-a3c8-000000002001",
+            "name": "四位样品架",
+            "children": [],
+            "parent": null,
+            "type": "device",
+            "class": "sample_rack_demo",
+            "template_name": "sample_rack_demo",
+            "sites_initialized": true,
+            "pose": {
+                "position": {
+                    "x": 0,
+                    "y": 0,
+                    "z": 0
+                }
+            },
+            "config": {},
+            "data": {},
+            "extra": {},
+            "sites": [
+                {
+                    "schema_version": 1,
+                    "uuid": "9d2c7e40-5b1a-4f76-a3c8-000000002011",
+                    "template_name": "sample_rack_demo",
+                    "material_uuid": "9d2c7e40-5b1a-4f76-a3c8-000000002001",
+                    "index": 1,
+                    "label": "A1",
+                    "visible": true,
+                    "occupied_material_uuid": null,
+                    "pose": {
+                        "position": { "x": 60.0, "y": 40.0, "z": 0.0 },
+                        "position3d": { "x": 60.0, "y": 40.0, "z": 0.0 },
+                        "size": { "width": 100.0, "height": 100.0, "depth": 20.0 }
+                    },
+                    "allowed_resource_categories": ["demo_sample"],
+                    "parent_link": "A1",
+                    "description": "样品架 A1 位",
+                    "meta_data": { "row": "A", "column": 1 },
+                    "extra": {}
+                },
+                {
+                    "schema_version": 1,
+                    "uuid": "9d2c7e40-5b1a-4f76-a3c8-000000002012",
+                    "template_name": "sample_rack_demo",
+                    "material_uuid": "9d2c7e40-5b1a-4f76-a3c8-000000002001",
+                    "index": 2,
+                    "label": "A2",
+                    "visible": true,
+                    "occupied_material_uuid": null,
+                    "pose": {
+                        "position": { "x": 180.0, "y": 40.0, "z": 0.0 },
+                        "position3d": { "x": 180.0, "y": 40.0, "z": 0.0 },
+                        "size": { "width": 100.0, "height": 100.0, "depth": 20.0 }
+                    },
+                    "allowed_resource_categories": ["demo_sample"],
+                    "parent_link": "A2",
+                    "description": "样品架 A2 位",
+                    "meta_data": { "row": "A", "column": 2 },
+                    "extra": {}
+                },
+                {
+                    "schema_version": 1,
+                    "uuid": "9d2c7e40-5b1a-4f76-a3c8-000000002013",
+                    "template_name": "sample_rack_demo",
+                    "material_uuid": "9d2c7e40-5b1a-4f76-a3c8-000000002001",
+                    "index": 3,
+                    "label": "B1",
+                    "visible": true,
+                    "occupied_material_uuid": null,
+                    "pose": {
+                        "position": { "x": 60.0, "y": 160.0, "z": 0.0 },
+                        "position3d": { "x": 60.0, "y": 160.0, "z": 0.0 },
+                        "size": { "width": 100.0, "height": 100.0, "depth": 20.0 }
+                    },
+                    "allowed_resource_categories": ["demo_sample"],
+                    "parent_link": "B1",
+                    "description": "样品架 B1 位",
+                    "meta_data": { "row": "B", "column": 1 },
+                    "extra": {}
+                },
+                {
+                    "schema_version": 1,
+                    "uuid": "9d2c7e40-5b1a-4f76-a3c8-000000002014",
+                    "template_name": "sample_rack_demo",
+                    "material_uuid": "9d2c7e40-5b1a-4f76-a3c8-000000002001",
+                    "index": 4,
+                    "label": "B2",
+                    "visible": true,
+                    "occupied_material_uuid": null,
+                    "pose": {
+                        "position": { "x": 180.0, "y": 160.0, "z": 0.0 },
+                        "position3d": { "x": 180.0, "y": 160.0, "z": 0.0 },
+                        "size": { "width": 100.0, "height": 100.0, "depth": 20.0 }
+                    },
+                    "allowed_resource_categories": ["demo_sample"],
+                    "parent_link": "B2",
+                    "description": "样品架 B2 位",
+                    "meta_data": { "row": "B", "column": 2 },
+                    "extra": {}
+                }
+            ]
+        }
+    ],
+    "links": []
+}
