@@ -3,7 +3,7 @@
         {
             "id": "sample_rack",
             "uuid": "9d2c7e40-5b1a-4f76-a3c8-000000002001",
-            "name": "四位样品架",
+            "name": "四位样品架(Host)",
             "children": [],
             "parent": null,
             "type": "device",
@@ -11,11 +11,8 @@
             "template_name": "sample_rack_demo",
             "sites_initialized": true,
             "pose": {
-                "position": {
-                    "x": 0,
-                    "y": 0,
-                    "z": 0
-                }
+                "position": { "x": 120, "y": 140, "z": 0 },
+                "size": { "width": 340, "height": 300, "depth": 0 }
             },
             "config": {},
             "data": {},

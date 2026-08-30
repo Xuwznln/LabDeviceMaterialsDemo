@@ -6,3 +6,4 @@ dist/
 .venv/
 .idea/
 .vscode/
+unilabos_data/

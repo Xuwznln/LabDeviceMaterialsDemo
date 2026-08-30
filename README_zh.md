@@ -2,16 +2,33 @@
 
 [English](README.md) | **中文**
 
-这个外部设备包演示 `@device(available_sites=...)` 固定位点的完整链路：
+双进程外部设备包：**host** 进程带固定位点样品架，**slave** 进程带物料
+工作台。端到端演示两条权威链路：
 
-1. **声明**：`sample_rack.py` 用 `SiteDefinition` 字面量声明 2x2 网格的四个
-   位点（A1/A2/B1/B2，各带坐标、尺寸、允许类目与行列元数据），AST 扫描进
-   注册表——常量必须保持字面量构造，扫描器不执行任何函数；
-2. **实例化**：host 启动时注册表同步为微后端资源模板，开机图物料对齐把
-   rack 落库，每个位点获得权威 uuid 与 `occupied_material_uuid` 占用字段；
-3. **占用流转**：设备动作经 materials gateway 读取位点快照
-   （`inspect_sites`）、创建样品并放入位点（`load_sample`）、在位点间转移
-   （`transfer_sample`）——占用状态全部由微后端权威维护，设备内存不持有副本。
+- **固定位点**（`@device(available_sites=...)`）：声明 -> 注册表模板 ->
+  权威位点实例 -> 占用流转；
+- **物料 CRUD**（`@resource` 耗材 + `materials.*` 门面）：deck / 枪头盒 /
+  孔板创建、`set_substance` 上报、位点间转移、权威删除——全部从 slave
+  进程发起，跨 HostLink 访问 host 上的物料权威。
+
+## 进程与设备
+
+| 进程 | 图 | 设备 | 演示链路 |
+| --- | --- | --- | --- |
+| host | `graph/host.json` | `sample_rack`（2x2 位点 A1-B2） | 位点声明/实例化/占用 |
+| slave | `graph/slave.json` | `material_bench`（deck 位点 T1-T4） | 物料创建/挂载/加液/转移/删除 |
+
+两种 backend 都保留 HostLink 作为物料链路：`hostlink` 模式它承载全部
+通信；`ros2` 模式设备走 ROS2，slave 仍经 HostLink 访问物料权威。
+
+## 耗材（`site_demo/labware.py`）
+
+- `demo_bench_deck` —— 2x2 台面（T1-T4，SBS footprint 位点），canonical
+  `ResourceSite` 语义，占用由微后端权威维护；
+- `demo_tips_24` —— 6x4 枪头盒，演示**按注册表类名创建**
+  （`materials.create("demo_tips_24", name=...)`）；
+- `demo_plate_12` —— 4x3 孔板（单孔 2200 ul），演示**本地草稿创建**，
+  `A1` 预置 `set_substance`，孔位液量由快照观察者实时上报。
 
 ## 从 GitHub 安装
 
@@ -32,62 +49,66 @@ python -m pip install -e .
 ## 有终止条件的双运行时 smoke
 
 ```bash
-python -m site_demo.smoke --backend hostlink --timeout 30
-python -m site_demo.smoke --backend ros2 --timeout 60
+python -m site_demo.smoke --backend hostlink --timeout 60
+python -m site_demo.smoke --backend ros2 --timeout 150
 ```
 
-阶段一（闭环 proof）：rack 等待开机对齐完成后，断言权威位点与装饰器声明
-逐项一致（label、坐标、允许类目），随后执行「装载 A1 -> 转移到 B2」，把
-每一步的位点快照写出 `proof.json`——初始四位全空，装载后 A1 被
-`proof-sample` 占用，转移后 A1 释放、B2 占用。
+smoke 启动真实的 host + slave 双进程，推进三个阶段：
 
-阶段二（工作流）：通过管理 HTTP API 真实运行「位点操作演示」工作流
-（装载 A2 -> 转移到 B1 -> 查看位点），断言任务成功且终态快照同时保留两个
-阶段的结果（B1=wf-sample、B2=proof-sample、A 行清空）。
+1. **闭环 proof**（并行）：host 上 rack 执行「装载 A1 -> 转移 B2」；
+   slave 上 bench 执行「ensure 台面 -> 创建枪头盒/孔板 -> A2 孔加液 ->
+   孔板换位到 T3 -> 废弃枪头盒」。两侧各写出可机读 proof 文件，逐字段
+   断言。
+2. **工作流**：host 启动时已幂等上报两个 `@workflow` 模板，smoke 经管理
+   HTTP API 逐个真实运行——「位点操作演示」（3 步，host 侧 rack）与
+   「物料流转演示」（5 步，跨进程分发到 slave 侧 bench，补给第二轮
+   耗材）。
+3. **权威终态**：直读物料权威中的 deck 树，断言 T3/T4 分别留下两轮
+   孔板、枪头盒全部删除、孔位内容物与两阶段写入一致。
 
 ## 手动启动
 
 ```bash
+# 终端 1 —— host（持有物料权威与管理 API）
 python -m unilabos --backend hostlink --skip_env_check \
   --devices ./site_demo --external_devices_only \
   --visual disable --disable_browser \
-  -g ./graph/site_demo.json
+  --hostlink_bind 127.0.0.1 --hostlink_port 18010 \
+  -g ./graph/host.json
 
-python -m unilabos --backend ros2 --disable_hostlink --skip_env_check \
+# 终端 2 —— slave（物料工作台，经 HostLink 访问权威）
+python -m unilabos --backend hostlink --skip_env_check --is_slave \
   --devices ./site_demo --external_devices_only \
   --visual disable --disable_browser \
-  -g ./graph/site_demo.json
+  --host_node_ip 127.0.0.1 --hostlink_port 18010 \
+  -g ./graph/slave.json
 ```
 
-## 图文件与位点声明的一致性
+`ros2` 模式把两侧 `--backend hostlink` 换成 `--backend ros2` 并共享
+`ROS_DOMAIN_ID`；HostLink 参数保留——它承载物料链路。
 
-图中 rack 节点显式携带四个位点实例（固定 uuid、`material_uuid` 指向设备、
-`occupied_material_uuid: null`），坐标与装饰器声明一致。开机对齐按 adopt
-语义以图中 uuid 落库；启动时注册表模板与图中位点做一致性核验，声明漂移
-会直接报「固定定义冲突」。图中不写 `sites` 时，微后端也会按模板自动实例化
-位点（uuid 由权威分配）。
+## 默认子工作流（`site_demo/workflows.py`）
 
-## 默认子工作流
+- **位点操作演示** —— `ctx.run_template("sample_rack_demo/load_sample")`
+  自动填充 device_id（该类在 host 图中只有一个实例），后续步骤用
+  `ctx.run("sample_rack/...")` 显式指定；
+- **物料流转演示** —— 五步全部用显式 `ctx.run("material_bench/...")`：
+  bench 在 slave 图中，host 上报时无法按类名解析实例。
 
-`site_demo/workflows.py` 用主仓的 `@workflow` 装饰器声明了「位点操作演示」：
-
-- `ctx.run_template("sample_rack_demo/load_sample")`：rack 类在图中只有一个
-  实例，构建时自动填充 device_id，无需确认；
-- 后续两步 `ctx.run("sample_rack/...")` 显式指定实例。
-
-声明式步骤严格串行：每步节点的 `execution_policy.depends_on` 指向上一步，
-调度器把它翻译成 DAG 依赖边，转移必然发生在装载完成之后。host 启动时按
-函数相对路径派生稳定 uuid 幂等上报，smoke 经
-`GET /api/v1/workflows` 检索、`POST /api/v1/workflow-tasks` 运行、
-`GET /api/v1/workflow-tasks/{uuid}/jobs` 读取每步 `return_info`。
+声明式步骤严格串行（`execution_policy.depends_on` 逐步链接）。工作流按
+函数相对路径派生稳定 uuid，host 启动时幂等上报，经
+`POST /api/v1/workflow-tasks` 真实运行。
 
 ## 目录
 
 ```text
-graph/site_demo.json               两种 backend 共用的一份图（含位点实例）
+graph/host.json                    host 图：sample_rack（含位点实例）
+graph/slave.json                   slave 图：material_bench + deck 配置
 site_demo/
   sample_rack.py                   @device available_sites 声明 + 三个位点动作
-  workflows.py                     @workflow 默认子工作流（装载/转移/查看）
-  smoke.py                         有终止条件的真实运行时证明
+  material_bench.py                slave 侧物料 CRUD 设备（五个动作 + proof）
+  labware.py                       @resource 台面 / 枪头盒 / 孔板
+  workflows.py                     两个 @workflow 默认子工作流
+  smoke.py                         有终止条件的双进程真实运行时证明
 tests/test_hostlink_smoke.py       HostLink 集成断言
 ```

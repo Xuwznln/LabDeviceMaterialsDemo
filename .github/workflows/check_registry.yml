@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 env:
-  STABLE_CORE_REF: ba03073d398c3219a3119956042e109b40bfc602
+  STABLE_CORE_REF: 28107a2f2c8fb8734836b337cbc8e5cf372450ad
 
 jobs:
   prepare:
@@ -130,13 +130,13 @@ jobs:
           cd "$RUNNER_TEMP"
           demo_package="$(python -c 'import pathlib, site_demo; print(pathlib.Path(site_demo.__file__).resolve().parent)')"
           unilab --check_mode --skip_env_check --devices "$demo_package" --external_devices_only
-          python -m site_demo.smoke --backend hostlink --timeout 30
+          python -m site_demo.smoke --backend hostlink --timeout 60
       - name: Assert ROS2 site contract
         shell: bash -el {0}
         run: |
           source "$GITHUB_WORKSPACE/.ci/install/unilabos_msgs/setup.bash"
           cd "$RUNNER_TEMP"
-          python -m site_demo.smoke --backend ros2 --timeout 60
+          python -m site_demo.smoke --backend ros2 --timeout 150
       - name: Mark this dev SHA as successfully tested
         if: ${{ success() && github.event_name == 'schedule' }}
         shell: bash

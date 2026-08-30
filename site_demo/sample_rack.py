@@ -103,7 +103,7 @@ RACK_SITES = [
 
 @device(
     id="sample_rack_demo",
-    displayname="四位样品架",
+    display_name="四位样品架",
     category=["virtual_device", "storage"],
     description="available_sites 固定位点演示：位点实例化、样品装载与位点间转移",
     available_sites=RACK_SITES,

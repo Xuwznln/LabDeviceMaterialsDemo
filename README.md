@@ -2,22 +2,36 @@
 
 **English** | [中文](README_zh.md)
 
-This external device package demonstrates the full `@device(available_sites=...)`
-fixed-site chain:
+A dual-process external device package: a **host** process with a fixed-site
+sample rack and a **slave** process with a material workbench. It demonstrates
+the two authority-backed chains end to end:
 
-1. **Declaration**: `sample_rack.py` declares a 2x2 grid of four sites
-   (A1/A2/B1/B2, each with coordinates, size, allowed categories and row/column
-   metadata) as `SiteDefinition` literals picked up by the AST registry scan —
-   the constant must stay a literal construction because the scanner never
-   executes functions;
-2. **Instantiation**: at host startup the registry is synced into microbackend
-   resource templates and the boot-graph material alignment persists the rack;
-   every site receives an authoritative uuid and an
-   `occupied_material_uuid` occupancy field;
-3. **Occupancy flow**: device actions go through the materials gateway to read
-   the site snapshot (`inspect_sites`), create a sample and place it
-   (`load_sample`), and move it between sites (`transfer_sample`) — occupancy
-   lives entirely in the microbackend authority, the device keeps no copy.
+- **Fixed sites** (`@device(available_sites=...)`): declaration -> registry
+  template -> authoritative site instances -> occupancy flow;
+- **Material CRUD** (`@resource` labware + `materials.*` facade): deck / tip
+  rack / well plate creation, `set_substance` reporting, transfer between
+  sites, and authoritative deletion — from a slave process, across HostLink.
+
+## Processes and devices
+
+| Process | Graph | Device | Chain it demonstrates |
+| --- | --- | --- | --- |
+| host | `graph/host.json` | `sample_rack` (2x2 sites A1-B2) | site declaration/instantiation/occupancy |
+| slave | `graph/slave.json` | `material_bench` (deck with sites T1-T4) | material create/assign/set_substance/transfer/remove |
+
+Both backends keep HostLink as the materials link: in `hostlink` mode it
+carries everything; in `ros2` mode devices talk ROS2 while the slave still
+reaches the host's materials authority through HostLink.
+
+## Labware (`site_demo/labware.py`)
+
+- `demo_bench_deck` — 2x2 deck (T1-T4, SBS footprint sites), canonical
+  `ResourceSite` semantics, occupancy owned by the microbackend authority;
+- `demo_tips_24` — 6x4 tip rack, created **by registry class name**
+  (`materials.create("demo_tips_24", name=...)`);
+- `demo_plate_12` — 4x3 well plate (2200 ul wells), created **from a local
+  draft** with `A1` pre-loaded via `set_substance`, well volumes reported
+  live by the snapshot observer.
 
 ## Install from GitHub
 
@@ -38,72 +52,71 @@ No AK/SK and no cloud lab required.
 ## Terminating dual-runtime smoke
 
 ```bash
-python -m site_demo.smoke --backend hostlink --timeout 30
-python -m site_demo.smoke --backend ros2 --timeout 60
+python -m site_demo.smoke --backend hostlink --timeout 60
+python -m site_demo.smoke --backend ros2 --timeout 150
 ```
 
-Stage one (closed-loop proof): after boot alignment the rack asserts the
-authoritative sites match the decorator declaration item by item (label,
-coordinates, allowed categories), then runs "load A1 -> transfer to B2",
-writing each site snapshot into `proof.json` — four empty sites initially,
-A1 occupied by `proof-sample` after loading, A1 released and B2 occupied
-after the transfer.
+The smoke boots real host + slave processes and drives three stages:
 
-Stage two (workflow): the smoke runs the "位点操作演示" workflow through the
-management HTTP API (load A2 -> transfer to B1 -> inspect) and asserts the
-task succeeds with the final snapshot holding both stages' results
-(B1=wf-sample, B2=proof-sample, row A empty).
+1. **Closed-loop proofs** (parallel): the rack runs "load A1 -> transfer to
+   B2" on the host; the bench runs "ensure deck -> create tips/plate ->
+   hydrate well A2 -> relocate plate to T3 -> dispose tips" on the slave.
+   Both write machine-readable proof files that are asserted field by field.
+2. **Workflows**: two `@workflow` templates were idempotently reported at
+   host startup; the smoke runs both through the management HTTP API —
+   "位点操作演示" (3 steps on the host rack) and "物料流转演示" (5 steps
+   dispatched cross-process to the slave bench, provisioning a second round
+   of labware).
+3. **Authority final state**: the deck tree is read back from the materials
+   authority; T3/T4 must hold the two plates, every tip rack must be gone,
+   and well substances must match both stages' writes.
 
 ## Manual start
 
 ```bash
+# terminal 1 — host (owns the materials authority and the management API)
 python -m unilabos --backend hostlink --skip_env_check \
   --devices ./site_demo --external_devices_only \
   --visual disable --disable_browser \
-  -g ./graph/site_demo.json
+  --hostlink_bind 127.0.0.1 --hostlink_port 18010 \
+  -g ./graph/host.json
 
-python -m unilabos --backend ros2 --disable_hostlink --skip_env_check \
+# terminal 2 — slave (material bench, reaches the authority via HostLink)
+python -m unilabos --backend hostlink --skip_env_check --is_slave \
   --devices ./site_demo --external_devices_only \
   --visual disable --disable_browser \
-  -g ./graph/site_demo.json
+  --host_node_ip 127.0.0.1 --hostlink_port 18010 \
+  -g ./graph/slave.json
 ```
 
-## Graph file vs. site declaration
+For `ros2` mode replace `--backend hostlink` with `--backend ros2` on both
+sides and share a `ROS_DOMAIN_ID`; the HostLink flags stay — they carry the
+materials link.
 
-The rack node in the graph carries the four site instances explicitly (fixed
-uuids, `material_uuid` pointing at the device, `occupied_material_uuid: null`)
-with coordinates matching the decorator declaration. Boot alignment adopts the
-graph uuids; startup verifies the registry template against the graph sites
-and any declaration drift fails fast with a "fixed definition conflict". If
-the graph omits `sites`, the microbackend instantiates them from the template
-automatically (uuids assigned by the authority).
+## Default sub-workflows (`site_demo/workflows.py`)
 
-## Default sub-workflow
+- **位点操作演示** — `ctx.run_template("sample_rack_demo/load_sample")`
+  auto-fills the device id (single instance of the class in the host graph),
+  the next steps use explicit `ctx.run("sample_rack/...")`;
+- **物料流转演示** — all five steps use explicit
+  `ctx.run("material_bench/...")`: the bench lives in the slave graph, so
+  class-based auto-fill is not available to the host at report time.
 
-`site_demo/workflows.py` declares the "位点操作演示" workflow with the core
-repo's `@workflow` decorator:
-
-- `ctx.run_template("sample_rack_demo/load_sample")`: the rack class has a
-  single instance in the graph, so the device_id is auto-filled at build time;
-- the following two `ctx.run("sample_rack/...")` steps address the instance
-  explicitly.
-
-Declarative steps run strictly serially: each node's
-`execution_policy.depends_on` points at the previous step and the scheduler
-translates it into DAG dependency edges, so the transfer always happens after
-loading completes. At host startup the workflow is idempotently upserted
-under a stable uuid derived from the function's relative path; the smoke
-finds it via `GET /api/v1/workflows`, runs it via
-`POST /api/v1/workflow-tasks`, and reads each step's `return_info` from
-`GET /api/v1/workflow-tasks/{uuid}/jobs`.
+Declarative steps run strictly serially (`execution_policy.depends_on`
+chains each node to the previous one). Workflows get stable uuids derived
+from the function's repo-relative path, are upserted at host startup, and
+are executed via `POST /api/v1/workflow-tasks`.
 
 ## Layout
 
 ```text
-graph/site_demo.json               one graph shared by both backends (site instances included)
+graph/host.json                    host graph: sample_rack (site instances included)
+graph/slave.json                   slave graph: material_bench + deck config
 site_demo/
   sample_rack.py                   @device available_sites declaration + three site actions
-  workflows.py                     @workflow default sub-workflow (load/transfer/inspect)
-  smoke.py                         terminating real-runtime proof
+  material_bench.py                slave-side material CRUD device (five actions + proof)
+  labware.py                       @resource deck / tip rack / well plate
+  workflows.py                     two @workflow default sub-workflows
+  smoke.py                         terminating dual-process real-runtime proof
 tests/test_hostlink_smoke.py       HostLink integration assertions
 ```

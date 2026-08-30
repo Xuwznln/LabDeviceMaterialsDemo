@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "site_demo"
-version = "0.1.0"
-description = "Uni-Lab-OS 位点展示演示设备包：available_sites 固定位点实例化、样品装载与位点间转移"
+version = "0.2.0"
+description = "Uni-Lab-OS 位点与物料演示设备包：host/slave 双进程、available_sites 固定位点、deck/枪头盒/孔板物料 CRUD 与 set_substance"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }

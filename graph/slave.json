@@ -1,0 +1,27 @@
+{
+    "nodes": [
+        {
+            "id": "material_bench",
+            "uuid": "9d2c7e40-5b1a-4f76-a3c8-000000002002",
+            "name": "物料工作台(Slave)",
+            "children": [],
+            "parent": null,
+            "type": "device",
+            "class": "material_bench_demo",
+            "template_name": "material_bench_demo",
+            "sites_initialized": true,
+            "sites": [],
+            "pose": {
+                "position": { "x": 560, "y": 140, "z": 0 },
+                "size": { "width": 440, "height": 380, "depth": 0 }
+            },
+            "config": {
+                "deck_name": "bench_deck",
+                "deck_uuid": "9d2c7e40-5b1a-4f76-a3c8-000000003001"
+            },
+            "data": {},
+            "extra": {}
+        }
+    ],
+    "links": []
+}
