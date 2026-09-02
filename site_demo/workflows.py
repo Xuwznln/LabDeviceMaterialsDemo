@@ -22,7 +22,8 @@ def site_tour(ctx: WorkflowBuildContext) -> None:
 
     ctx.run_template(
         "sample_rack_demo/load_sample",
-        {"site_label": "A2", "sample_name": "wf-sample"},
+        # site 是 SiteSlot：前端提交权威 Site uuid，模板/脚本可用 label 便捷形态
+        {"site": "A2", "sample_name": "wf-sample"},
         name="装载样品",
     )
     ctx.run(

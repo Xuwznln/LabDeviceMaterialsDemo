@@ -23,14 +23,15 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from unilabos.registry.decorators import action, device, not_action, topic_config
+from unilabos.registry.placeholder_type import SiteSlot
 from unilabos.resources.objects.pose import (
     ResourceDictPosition,
     ResourceDictPositionObject,
     ResourceDictPositionSize,
 )
 from unilabos.resources.objects.site import SiteDefinition
-from unilabos.protocol.common import InventoryMutation
 from unilabos.protocol.materials import (
+    InventoryMutation,
     MaterialDataWrite,
     MaterialIdentityWrite,
     MaterialMove,
@@ -181,12 +182,17 @@ class SampleRackDemo:
         return self._gateway().get_material_by_resource_id(self.device_id)
 
     @not_action
-    def _site_by_label(self, rack: Any, label: str) -> Any:
+    def _resolve_site(self, rack: Any, selector: str) -> Any:
+        """SiteSlot 选择器：优先按权威 Site uuid 精确匹配，回退 label 便捷形态。"""
+
         for site in rack.sites:
-            if site.label == label:
+            if str(site.site_uuid) == selector:
+                return site
+        for site in rack.sites:
+            if site.label == selector:
                 return site
         raise ValueError(
-            f"位点 {label!r} 不存在，可用: {[site.label for site in rack.sites]}"
+            f"位点 {selector!r} 不存在，可用: {[site.label for site in rack.sites]}"
         )
 
     @not_action
@@ -271,11 +277,18 @@ class SampleRackDemo:
         feedback_interval=1.0,
     )
     def load_sample(
-        self, site_label: str = "A1", sample_name: str = "demo-sample"
+        self, site: SiteSlot = "A1", sample_name: str = "demo-sample"
     ) -> Dict[str, Any]:
+        """把样品装载到指定位点。
+
+        Args:
+            site[目标位点]: SiteSlot——前端 Site 选择器提交权威 ResourceSite
+                的 uuid；工作流/脚本可直接传 label 便捷形态（如 "A2"）。
+            sample_name[样品名]: 样品物料的 resource_id / 展示名，重复调用复用同名物料。
+        """
         gateway = self._gateway()
         rack = self._rack()
-        site = self._site_by_label(rack, site_label)
+        resolved = self._resolve_site(rack, site)
 
         self._ensure_sample_template()
         sample = self._sample_by_resource_id(sample_name)
@@ -309,22 +322,22 @@ class SampleRackDemo:
             sample = created.data.nodes[0]
         sample_uuid = sample.material.material_uuid
 
-        if site.occupied_material_uuid not in (None, sample_uuid):
-            raise ValueError(f"位点 {site_label} 已被占用")
-        if site.occupied_material_uuid != sample_uuid:
+        if resolved.occupied_material_uuid not in (None, sample_uuid):
+            raise ValueError(f"位点 {resolved.label} 已被占用")
+        if resolved.occupied_material_uuid != sample_uuid:
             gateway.move_material(
                 self._mutation(
-                    "move_material", f"load:{sample_name}->{site_label}"
+                    "move_material", f"load:{sample_name}->{resolved.label}"
                 ),
                 MaterialMove(
                     material_uuid=sample_uuid,
-                    destination_site_uuid=site.site_uuid,
+                    destination_site_uuid=resolved.site_uuid,
                 ),
             )
-        self.logger.info(f"[SampleRack] 样品 {sample_name} 已装载到 {site_label}")
+        self.logger.info(f"[SampleRack] 样品 {sample_name} 已装载到 {resolved.label}")
         return {
             "success": True,
-            "site_label": site_label,
+            "site_label": resolved.label,
             "sample_name": sample_name,
             "sample_uuid": sample_uuid,
         }
@@ -340,8 +353,8 @@ class SampleRackDemo:
     ) -> Dict[str, Any]:
         gateway = self._gateway()
         rack = self._rack()
-        source = self._site_by_label(rack, from_label)
-        destination = self._site_by_label(rack, to_label)
+        source = self._resolve_site(rack, from_label)
+        destination = self._resolve_site(rack, to_label)
 
         if not source.occupied_material_uuid:
             raise ValueError(f"位点 {from_label} 上没有样品")

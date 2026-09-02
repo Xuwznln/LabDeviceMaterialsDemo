@@ -1,4 +1,4 @@
-# UniLabOS Site Show Demo
+# Uni-Lab-OS Site Show Demo
 
 **English** | [中文](README_zh.md)
 
@@ -101,6 +101,16 @@ materials link.
 - **物料流转演示** — all five steps use explicit
   `ctx.run("material_bench/...")`: the bench lives in the slave graph, so
   class-based auto-fill is not available to the host at report time.
+
+Site parameters demonstrate both styles: `load_sample(site=...)` and
+`relocate_plate(to_site=...)` are annotated with the `SiteSlot` placeholder
+type — the registry emits a string schema plus
+`placeholder_keys: unilabos_sites`, so the frontend renders a Site picker
+(submitting the authoritative ResourceSite uuid) while workflows/scripts may
+still pass the label shorthand (consumers resolve uuid/label uniformly).
+`transfer_sample(from_label/to_label)` and
+`provision_labware(tips_site/plate_site)` keep plain label strings as the
+contrasting style.
 
 Declarative steps run strictly serially (`execution_policy.depends_on`
 chains each node to the previous one). Workflows get stable uuids derived

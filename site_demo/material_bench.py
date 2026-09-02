@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from unilabos.registry.decorators import action, device, not_action, topic_config
+from unilabos.registry.placeholder_type import SiteSlot
 
 from .labware import BENCH_SITE_LAYOUT, build_bench_deck, demo_plate_12
 
@@ -279,7 +280,14 @@ class MaterialBenchDemo:
         always_free=True,
         feedback_interval=1.0,
     )
-    def relocate_plate(self, to_site: str = "T3") -> Dict[str, Any]:
+    def relocate_plate(self, to_site: SiteSlot = "T3") -> Dict[str, Any]:
+        """把当前板换到台面目标位点。
+
+        Args:
+            to_site[目标位点]: SiteSlot——前端 Site 选择器提交权威 ResourceSite
+                的 uuid；工作流/脚本可直接传 label 便捷形态（如 "T3"）。
+                ``materials.transfer`` 的 Site 选择器对 uuid/label/索引统一兼容。
+        """
         from unilabos.resources import materials
 
         node = self._device_node

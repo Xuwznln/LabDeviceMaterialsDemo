@@ -1,4 +1,4 @@
-# UniLabOS 位点展示演示
+# Uni-Lab-OS 位点展示演示
 
 [English](README.md) | **中文**
 
@@ -94,6 +94,13 @@ python -m unilabos --backend hostlink --skip_env_check --is_slave \
   `ctx.run("sample_rack/...")` 显式指定；
 - **物料流转演示** —— 五步全部用显式 `ctx.run("material_bench/...")`：
   bench 在 slave 图中，host 上报时无法按类名解析实例。
+
+位点参数演示两种风格：`load_sample(site=...)` 与 `relocate_plate(to_site=...)`
+标注 `SiteSlot` 占位类型——注册表生成字符串 schema 并注入
+`placeholder_keys: unilabos_sites`，前端按 Site 选择器渲染（提交权威
+ResourceSite uuid），工作流/脚本仍可直接传 label 便捷形态（消费侧对
+uuid/label 统一解析）；`transfer_sample(from_label/to_label)` 与
+`provision_labware(tips_site/plate_site)` 保留纯 label 字符串作对照。
 
 声明式步骤严格串行（`execution_policy.depends_on` 逐步链接）。工作流按
 函数相对路径派生稳定 uuid，host 启动时幂等上报，经
