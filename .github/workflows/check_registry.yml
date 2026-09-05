@@ -37,7 +37,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/unilab-dev-tested
-          key: site-demo-dev-smoke-${{ steps.core.outputs.sha }}
+          key: materials-demo-dev-smoke-${{ steps.core.outputs.sha }}
       - name: Decide whether runtime smoke is needed
         id: decision
         shell: bash
@@ -115,28 +115,28 @@ jobs:
           import importlib.metadata
           import os
           from pathlib import Path
-          import site_demo
+          import materials_demo
 
-          module_path = Path(site_demo.__file__).resolve()
+          module_path = Path(materials_demo.__file__).resolve()
           workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
           assert not module_path.is_relative_to(workspace), module_path
-          distribution = importlib.metadata.distribution("site_demo")
-          print(f"installed site_demo {distribution.version}: {module_path}")
+          distribution = importlib.metadata.distribution("materials_demo")
+          print(f"installed materials_demo {distribution.version}: {module_path}")
           PY
       - name: Validate registry and assert HostLink site contract
         shell: bash -el {0}
         run: |
           source "$GITHUB_WORKSPACE/.ci/install/unilabos_msgs/setup.bash"
           cd "$RUNNER_TEMP"
-          demo_package="$(python -c 'import pathlib, site_demo; print(pathlib.Path(site_demo.__file__).resolve().parent)')"
+          demo_package="$(python -c 'import pathlib, materials_demo; print(pathlib.Path(materials_demo.__file__).resolve().parent)')"
           unilab --check_mode --skip_env_check --devices "$demo_package" --external_devices_only
-          python -m site_demo.smoke --backend hostlink --timeout 60
+          python -m materials_demo.smoke --backend hostlink --timeout 120
       - name: Assert ROS2 site contract
         shell: bash -el {0}
         run: |
           source "$GITHUB_WORKSPACE/.ci/install/unilabos_msgs/setup.bash"
           cd "$RUNNER_TEMP"
-          python -m site_demo.smoke --backend ros2 --timeout 150
+          python -m materials_demo.smoke --backend ros2 --timeout 200
       - name: Mark this dev SHA as successfully tested
         if: ${{ success() && github.event_name == 'schedule' }}
         shell: bash
@@ -148,4 +148,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/unilab-dev-tested
-          key: site-demo-dev-smoke-${{ needs.prepare.outputs.core_sha }}
+          key: materials-demo-dev-smoke-${{ needs.prepare.outputs.core_sha }}

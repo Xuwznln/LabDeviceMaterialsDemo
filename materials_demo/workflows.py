@@ -15,7 +15,7 @@ MATERIAL_FLOW_WORKFLOW_NAME = "物料流转演示"
 @workflow(
     display_name=SITE_TOUR_WORKFLOW_NAME,
     description="装载样品到 A2 -> 转移到 B1 -> 查看位点占用快照（与闭环用的 A1/B2 互不干扰）",
-    tags=["site-demo", "available-sites"],
+    tags=["materials-demo", "available-sites"],
 )
 def site_tour(ctx: WorkflowBuildContext) -> None:
     """rack 类在图中只有一个实例：首步 run_template 自动填充 device_id。"""
@@ -40,7 +40,7 @@ def site_tour(ctx: WorkflowBuildContext) -> None:
         "第二轮物料 CRUD：补给耗材（T1/T2）-> B1 加液 -> 板换位到 T4 -> "
         "废弃枪头盒 -> 台面报告（闭环第一轮已把板留在 T3）"
     ),
-    tags=["site-demo", "materials"],
+    tags=["materials-demo", "materials"],
 )
 def material_flow(ctx: WorkflowBuildContext) -> None:
     """bench 设备在 slave 图中，host 上报时不可见其实例：

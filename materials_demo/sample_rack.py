@@ -10,7 +10,7 @@
    所有占用状态都由微后端权威维护，设备内存不持有副本。
 
 启动后台线程执行一遍「查看 -> 装载 A1 -> 转移到 B2 -> 复查」闭环，
-结果写入 SITE_DEMO_PROOF_FILE 指定的终态 JSON，供有限时 smoke 断言。
+结果写入 MATERIALS_DEMO_PROOF_FILE 指定的终态 JSON，供有限时 smoke 断言。
 """
 
 import json
@@ -41,7 +41,7 @@ from unilabos.protocol.materials import (
 )
 
 #: 样品物料的模板名（rack 模板由注册表自动同步，样品模板由设备自行确保）。
-SAMPLE_TEMPLATE_NAME = "site_demo_sample"
+SAMPLE_TEMPLATE_NAME = "materials_demo_sample"
 
 
 #: 2x2 网格的四个固定位点；图与断言共享同一出处。
@@ -134,12 +134,12 @@ class SampleRackDemo:
     @not_action
     def post_init(self, node: Any) -> None:
         self._device_node = node
-        proof_file = os.environ.get("SITE_DEMO_PROOF_FILE", "").strip()
+        proof_file = os.environ.get("MATERIALS_DEMO_PROOF_FILE", "").strip()
         if proof_file:
             threading.Thread(
                 target=self._run_proof,
                 args=(Path(proof_file),),
-                name="site-demo-proof",
+                name="materials-demo-proof",
                 daemon=True,
             ).start()
 
@@ -435,7 +435,7 @@ class SampleRackDemo:
     def _run_proof(self, proof_file: Path) -> None:
         """真实运行时里跑一遍位点闭环，并原子写出可机读终态。"""
 
-        delay = float(os.environ.get("SITE_DEMO_START_DELAY", "1.0"))
+        delay = float(os.environ.get("MATERIALS_DEMO_START_DELAY", "1.0"))
         time.sleep(max(0.0, delay))
         self._phase = "running"
         try:

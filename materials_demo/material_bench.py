@@ -13,10 +13,15 @@
   load 投影回设备，本地实例被权威重建替换）；
 - ``dispose_tips``       materials.remove 删除权威物料树（位点自动释放），
   随后本地卸载实例；
-- ``bench_report``       从权威读取台面终态：位点占用 + 各板孔位内容物。
+- ``bench_report``       从权威读取台面终态：位点占用 + 各板孔位内容物；
+- ``fill_well``          阶段三「出库装板并加液」的消耗方：``water`` 是调度器按节点
+  reagent 需求注入的权威分配 ``{"quantity", "unit", "lots": [...]}``，本设备**不选 lot、
+  不扣数量**（预留与扣减在调度器 / 执行面完成），只把体积加进指定台面位点上那块板的
+  孔位——板是前一节点 ``host_node/apply_deduct_resource`` 出库挂上来的，用自己的
+  resource tracker 按位点定位，不需要任何 uuid 参数。
 
 启动后台线程执行「prepare -> provision -> hydrate -> relocate -> dispose ->
-report」完整闭环，逐步断言并写出 SITE_DEMO_BENCH_PROOF_FILE 终态 JSON。
+report」完整闭环，逐步断言并写出 MATERIALS_DEMO_BENCH_PROOF_FILE 终态 JSON。
 """
 
 import asyncio
@@ -31,7 +36,8 @@ from typing import Any, Callable, Dict, List, Optional
 from unilabos.registry.decorators import action, device, not_action, topic_config
 from unilabos.registry.placeholder_type import SiteSlot
 
-from .labware import BENCH_SITE_LAYOUT, build_bench_deck, demo_plate_12
+from .labware import BENCH_SITE_LAYOUT, build_bench_deck, demo_plate_12, site_occupant
+from .material_flow_graph import WATER_UNIT
 
 #: 台面 Deck 的固定 uuid：图 config 与 smoke 断言共享同一出处。
 DEFAULT_DECK_UUID = "9d2c7e40-5b1a-4f76-a3c8-000000003001"
@@ -72,11 +78,12 @@ class MaterialBenchDemo:
         self._round = 0
         self._tips_uuid: str = ""
         self._plate_uuid: str = ""
+        self._fills = 0
 
     @not_action
     def post_init(self, node: Any) -> None:
         self._device_node = node
-        proof_file = os.environ.get("SITE_DEMO_BENCH_PROOF_FILE", "").strip()
+        proof_file = os.environ.get("MATERIALS_DEMO_BENCH_PROOF_FILE", "").strip()
         if proof_file:
             threading.Thread(
                 target=self._run_proof,
@@ -96,6 +103,12 @@ class MaterialBenchDemo:
     def phase(self) -> str:
         """当前演示阶段：idle / running / done / failed。"""
         return self._phase
+
+    @property
+    @topic_config()
+    def fills(self) -> int:
+        """fill_well 被实际调用的次数（预检失败的任务不会增加它）。"""
+        return self._fills
 
     # ── 权威访问 ────────────────────────────────────────────
 
@@ -357,6 +370,75 @@ class MaterialBenchDemo:
         }
 
     @action(
+        display_name="孔位加液（按库存分配）",
+        description="把节点库存需求 water 解析出的试剂分配加进指定台面位点上那块板的孔位；预留与扣减由调度器/执行面完成，本动作只写孔位内容物并等权威可见",
+        feedback_interval=1.0,
+    )
+    def fill_well(
+        self,
+        water: dict,
+        slot: str = "T1",
+        well: str = "A1",
+        substance: str = "Water",
+    ) -> Dict[str, Any]:
+        """按库存分配加液。
+
+        Args:
+            water[试剂分配]: 由调度器按节点库存需求 key=water 注入：``{"quantity", "unit", "lots": [{"lot_uuid", "quantity"}]}``。
+            slot[台面位点]: 板所在的台面位点 label（apply_deduct_resource 的 slot_on_deck）。
+            well[孔位]: 接收液体的孔位，如 A1。
+            substance[物质名]: 写入孔位内容物的物质名。
+        """
+        allocation = dict(water or {})
+        lots = list(allocation.get("lots") or [])
+        if not lots:
+            raise ValueError("water 缺少权威分配的 lot：该节点没有声明 water 库存需求")
+        unit = str(allocation.get("unit") or "")
+        if unit != WATER_UNIT:
+            raise ValueError(f"water 分配单位 {unit!r} 与孔位追踪单位 {WATER_UNIT!r} 不一致")
+        volume = float(allocation.get("quantity") or 0.0)
+
+        node = self._device_node
+        deck = node.resource_tracker.uuid_to_resources.get(self.deck_uuid)
+        if deck is None:
+            raise RuntimeError("台面尚未就位（prepare_bench 未完成）")
+        # 板由前一节点 host_node/apply_deduct_resource 出库挂上来：用自己的 tracker 按位点定位
+        plate = site_occupant(deck, slot)
+        if plate is None:
+            raise ValueError(f"台面位点 {slot} 上没有物料；请先由 host_node/apply_deduct_resource 出库挂载")
+        plate_uuid = str(plate.unilabos_uuid)
+        target = plate.get_well(well)
+        target.tracker.add_liquid(substance, volume)
+        target.tracker.commit()
+
+        well_uuid = str(target.unilabos_uuid)
+        expected = [substance, volume, WATER_UNIT]
+        self._wait_until(
+            lambda: expected in (self._authority_substances(plate_uuid, well_uuid) or []),
+            timeout=15.0,
+            note=f"observer 自动快照（{plate.name} {well} 加液）未到达权威",
+        )
+        self._fills += 1
+        self.logger.info(
+            f"[Bench] {plate.name}@{slot} {well} += {substance} {volume:g}{unit}"
+            f"（{len(lots)} 个 lot，预留与扣减由权威完成）"
+        )
+        return {
+            "success": True,
+            "plate_uuid": plate_uuid,
+            "plate_name": plate.name,
+            "slot": slot,
+            "well": well,
+            "well_uuid": well_uuid,
+            "substance": substance,
+            "volume": volume,
+            "unit": unit,
+            "lots": [{"lot_uuid": str(item["lot_uuid"]), "quantity": float(item["quantity"])} for item in lots],
+            "substances": self._authority_substances(plate_uuid, well_uuid),
+            "fills": self._fills,
+        }
+
+    @action(
         display_name="台面报告",
         description="从权威读取台面终态：位点占用 + 台面上各板的孔位内容物",
         always_free=True,
@@ -384,6 +466,7 @@ class MaterialBenchDemo:
             "deck_uuid": self.deck_uuid,
             "sites": self._deck_sites(),
             "wells": wells,
+            "fills": self._fills,
         }
 
     # ── 闭环证明 ────────────────────────────────────────────
@@ -405,7 +488,7 @@ class MaterialBenchDemo:
     def _run_proof(self, proof_file: Path) -> None:
         """真实运行时里跑一遍物料 CRUD 闭环，并原子写出可机读终态。"""
 
-        delay = float(os.environ.get("SITE_DEMO_START_DELAY", "1.0"))
+        delay = float(os.environ.get("MATERIALS_DEMO_START_DELAY", "1.0"))
         time.sleep(max(0.0, delay))
         self._phase = "running"
         try:
