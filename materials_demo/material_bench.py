@@ -20,17 +20,13 @@
   孔位——板是前一节点 ``host_node/apply_deduct_resource`` 出库挂上来的，用自己的
   resource tracker 按位点定位，不需要任何 uuid 参数。
 
-启动后台线程执行「prepare -> provision -> hydrate -> relocate -> dispose ->
-report」完整闭环，逐步断言并写出 MATERIALS_DEMO_BENCH_PROOF_FILE 终态 JSON。
+设备启动后不自跑任何动作：「prepare -> provision -> hydrate -> relocate -> dispose ->
+report」闭环由 ``workflows.py`` 的 @workflow 经管理 API 跨进程触发，断言只看各节点返回值。
 """
 
 import asyncio
-import json
 import logging
-import os
-import threading
 import time
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from unilabos.registry.decorators import action, device, not_action, topic_config
@@ -74,7 +70,6 @@ class MaterialBenchDemo:
         self.deck_uuid = deck_uuid
         self.logger = logging.getLogger(f"MaterialBench.{self.device_id}")
         self._start_time = time.time()
-        self._phase: str = "idle"
         self._round = 0
         self._tips_uuid: str = ""
         self._plate_uuid: str = ""
@@ -83,26 +78,12 @@ class MaterialBenchDemo:
     @not_action
     def post_init(self, node: Any) -> None:
         self._device_node = node
-        proof_file = os.environ.get("MATERIALS_DEMO_BENCH_PROOF_FILE", "").strip()
-        if proof_file:
-            threading.Thread(
-                target=self._run_proof,
-                args=(Path(proof_file),),
-                name="bench-demo-proof",
-                daemon=True,
-            ).start()
 
     @property
     @topic_config(period=1.0)
     def heartbeat(self) -> int:
         """自启动以来的心跳秒数。"""
         return int(time.time() - self._start_time)
-
-    @property
-    @topic_config()
-    def phase(self) -> str:
-        """当前演示阶段：idle / running / done / failed。"""
-        return self._phase
 
     @property
     @topic_config()
@@ -252,6 +233,7 @@ class MaterialBenchDemo:
             "plate_a1_substances": self._authority_substances(
                 self._plate_uuid, self._well_uuid(plate, "A1")
             ),
+            "sites": self._deck_sites(),
         }
 
     @action(
@@ -468,68 +450,3 @@ class MaterialBenchDemo:
             "wells": wells,
             "fills": self._fills,
         }
-
-    # ── 闭环证明 ────────────────────────────────────────────
-
-    @not_action
-    def _await_authority(self, timeout: float = 20.0) -> None:
-        """等待 HostLink 物料链路就绪（权威可访问即可，不要求台面存在）。"""
-
-        def probe() -> bool:
-            try:
-                self._gateway().list_templates()
-                return True
-            except Exception:  # noqa: BLE001 - 链路尚未建立
-                return False
-
-        self._wait_until(probe, timeout=timeout, note="物料权威链路未就绪")
-
-    @not_action
-    def _run_proof(self, proof_file: Path) -> None:
-        """真实运行时里跑一遍物料 CRUD 闭环，并原子写出可机读终态。"""
-
-        delay = float(os.environ.get("MATERIALS_DEMO_START_DELAY", "1.0"))
-        time.sleep(max(0.0, delay))
-        self._phase = "running"
-        try:
-            self._await_authority()
-            prepared = self.prepare_bench()
-            provisioned = self.provision_labware(
-                tips_site="T1", plate_site="T2", water_volume=40.0
-            )
-            after_provision = self._deck_sites()
-            hydrated = self.hydrate_well(well="A2", substance="Buffer", volume=25.0)
-            relocated = self.relocate_plate(to_site="T3")
-            disposed = self.dispose_tips()
-            report = self.bench_report()
-            proof = {
-                "success": True,
-                "backend": str(
-                    getattr(self._device_node, "backend_name", "unknown")
-                ),
-                "prepared": prepared,
-                "provisioned": provisioned,
-                "after_provision": after_provision,
-                "hydrated": hydrated,
-                "relocated": relocated,
-                "disposed": disposed,
-                "report": report,
-            }
-            self._phase = "done"
-        except Exception as exc:  # noqa: BLE001 - 演示用，报告任何失败
-            self.logger.exception("物料闭环失败")
-            proof = {
-                "success": False,
-                "backend": str(
-                    getattr(self._device_node, "backend_name", "unknown")
-                ),
-                "error": f"{type(exc).__name__}: {exc}",
-            }
-            self._phase = "failed"
-        proof_file.parent.mkdir(parents=True, exist_ok=True)
-        temporary = proof_file.with_suffix(proof_file.suffix + ".tmp")
-        temporary.write_text(
-            json.dumps(proof, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        temporary.replace(proof_file)

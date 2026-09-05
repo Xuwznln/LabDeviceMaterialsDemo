@@ -5,20 +5,16 @@
 1. ``@device(available_sites=RACK_SITES)`` 声明固定位点，AST 扫描进注册表；
 2. host 启动时注册表同步为微后端资源模板，图中 rack 物料按模板/图落库，
    每个位点获得权威 uuid 与 ``occupied_material_uuid`` 占用字段；
-3. 设备动作通过 materials gateway 读取自身位点快照（inspect_sites）、
-   创建样品并放入位点（load_sample）、在位点间转移（transfer_sample）——
-   所有占用状态都由微后端权威维护，设备内存不持有副本。
+3. 设备动作通过 materials gateway 核对位点定义（verify_site_definition）、读取自身位点
+   快照（inspect_sites）、创建样品并放入位点（load_sample）、在位点间转移
+   （transfer_sample）——所有占用状态都由微后端权威维护，设备内存不持有副本。
 
-启动后台线程执行一遍「查看 -> 装载 A1 -> 转移到 B2 -> 复查」闭环，
-结果写入 MATERIALS_DEMO_PROOF_FILE 指定的终态 JSON，供有限时 smoke 断言。
+设备启动后不自跑任何动作：「核对声明 -> 装载 A1 -> 转移到 B2 -> 复查」闭环由
+``workflows.py`` 的 @workflow 经管理 API 触发，断言只看各节点返回值。
 """
 
-import json
 import logging
-import os
-import threading
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -128,32 +124,17 @@ class SampleRackDemo:
         self.device_id = device_id or "sample_rack_demo"
         self.logger = logging.getLogger(f"SampleRack.{self.device_id}")
         self._start_time = time.time()
-        self._phase: str = "idle"
         self._template_ready = False
 
     @not_action
     def post_init(self, node: Any) -> None:
         self._device_node = node
-        proof_file = os.environ.get("MATERIALS_DEMO_PROOF_FILE", "").strip()
-        if proof_file:
-            threading.Thread(
-                target=self._run_proof,
-                args=(Path(proof_file),),
-                name="materials-demo-proof",
-                daemon=True,
-            ).start()
 
     @property
     @topic_config(period=1.0)
     def heartbeat(self) -> int:
         """自启动以来的心跳秒数。"""
         return int(time.time() - self._start_time)
-
-    @property
-    @topic_config()
-    def phase(self) -> str:
-        """当前演示阶段：idle / running / done / failed。"""
-        return self._phase
 
     # ── 微后端网关 ──────────────────────────────────────────
 
@@ -383,23 +364,27 @@ class SampleRackDemo:
             "to_label": to_label,
         }
 
-    # ── 闭环证明 ────────────────────────────────────────────
+    @action(
+        display_name="核对位点声明",
+        description="把权威中的位点快照与 @device(available_sites=...) 声明逐项对齐（label / index / 坐标 / 类目），不一致则报错",
+        always_free=True,
+        feedback_interval=1.0,
+    )
+    def verify_site_definition(self) -> Dict[str, Any]:
+        """声明 → 注册表模板 → 权威位点实例 这条链路的可断言证据。"""
 
-    @not_action
-    def _await_rack(self, timeout: float = 15.0) -> Any:
-        """等待开机图物料对齐完成（rack 物料带全部位点出现在权威中）。"""
-
-        deadline = time.monotonic() + timeout
-        last_error: Exception | None = None
-        while time.monotonic() < deadline:
-            try:
-                rack = self._rack()
-                if len(rack.sites) == len(RACK_SITES):
-                    return rack
-            except Exception as exc:  # noqa: BLE001 - 微后端尚未就绪
-                last_error = exc
-            time.sleep(0.2)
-        raise RuntimeError(f"权威中未出现样品架位点: {last_error}")
+        rack = self._rack()
+        if len(rack.sites) != len(RACK_SITES):
+            raise RuntimeError(f"权威中位点数 {len(rack.sites)} 与声明 {len(RACK_SITES)} 不一致")
+        check = self._definition_check(rack)
+        if not check["matches"]:
+            raise RuntimeError(f"权威位点与声明不一致: expected={check['expected']} actual={check['actual']}")
+        return {
+            "success": True,
+            "rack_uuid": rack.material.material_uuid,
+            "backend": str(getattr(self._device_node, "backend_name", "unknown")),
+            **check,
+        }
 
     @not_action
     def _definition_check(self, rack: Any) -> Dict[str, Any]:
@@ -430,44 +415,3 @@ class SampleRackDemo:
             for entry in self._site_snapshot(rack)
         ]
         return {"matches": actual == expected, "expected": expected, "actual": actual}
-
-    @not_action
-    def _run_proof(self, proof_file: Path) -> None:
-        """真实运行时里跑一遍位点闭环，并原子写出可机读终态。"""
-
-        delay = float(os.environ.get("MATERIALS_DEMO_START_DELAY", "1.0"))
-        time.sleep(max(0.0, delay))
-        self._phase = "running"
-        try:
-            rack = self._await_rack()
-            proof = {
-                "success": True,
-                "backend": str(
-                    getattr(self._device_node, "backend_name", "unknown")
-                ),
-                "rack_uuid": rack.material.material_uuid,
-                "definition_check": self._definition_check(rack),
-                "initial_sites": self._site_snapshot(rack),
-                "load": self.load_sample("A1", "proof-sample"),
-                "after_load": self._site_snapshot(self._rack()),
-                "moved": self.transfer_sample("A1", "B2"),
-                "after_transfer": self._site_snapshot(self._rack()),
-            }
-            self._phase = "done"
-        except Exception as exc:  # noqa: BLE001 - 演示用，报告任何失败
-            self.logger.exception("位点演示闭环失败")
-            proof = {
-                "success": False,
-                "backend": str(
-                    getattr(self._device_node, "backend_name", "unknown")
-                ),
-                "error": f"{type(exc).__name__}: {exc}",
-            }
-            self._phase = "failed"
-        proof_file.parent.mkdir(parents=True, exist_ok=True)
-        temporary = proof_file.with_suffix(proof_file.suffix + ".tmp")
-        temporary.write_text(
-            json.dumps(proof, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        temporary.replace(proof_file)

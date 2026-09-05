@@ -1,19 +1,20 @@
-"""有限时启动真实 host/slave 双进程，验证位点与物料两条闭环，再运行默认子工作流。
+"""有限时启动真实 host/slave 双进程，全部经管理 HTTP API 运行工作流并断言。
 
-阶段一（双闭环，并行推进）：
+设备启动后不自跑任何动作。host 启动时已把 materials_demo/workflows.py 里的四个
+@workflow 幂等上报到本机 Workflow Authority，本脚本按顺序经 ``POST /workflow-tasks``
+真实运行，断言只看各节点返回值（``/workflow-tasks/{uuid}/jobs``）：
 
-- host 进程 ``sample_rack``：available_sites 位点闭环（装载 A1 -> 转移 B2），
-  写出 MATERIALS_DEMO_PROOF_FILE；
-- slave 进程 ``material_bench``：物料 CRUD 闭环（ensure deck -> 创建 tip
-  rack/孔板 -> set_substance 上报 -> transfer 换位 -> remove 删除），全部经
-  HostLink 访问 host 上的微后端物料权威，写出 MATERIALS_DEMO_BENCH_PROOF_FILE。
-  ros2 backend 同样走该链路（ROS2 承载设备通信，HostLink 承载物料）。
+阶段一（第一轮闭环）：
 
-阶段二（工作流）：host 启动时已把 materials_demo/workflows.py 里的两个 @workflow
-幂等上报到本机 Workflow Authority；本脚本经管理 HTTP API 逐个创建任务：
+- 「位点闭环演示」四步指向 host 侧 sample_rack：核对权威位点与 available_sites 声明
+  逐项一致 -> 装载 A1 -> 转移 B2 -> 复查；
+- 「物料闭环演示」六步跨进程分发到 slave 侧 material_bench：ensure deck -> 创建 tip
+  rack/孔板 -> set_substance 上报 -> transfer 换位到 T3 -> remove 删除 -> 报告，全部经
+  HostLink 访问 host 上的微后端物料权威。ros2 backend 同样走该链路（ROS2 承载设备
+  通信，HostLink 承载物料）。
 
-- 「位点操作演示」三步指向 host 侧 sample_rack；
-- 「物料流转演示」五步跨进程分发到 slave 侧 material_bench（第二轮耗材）。
+阶段二（第二轮）：「位点操作演示」三步（A2 -> B1）与「物料流转演示」五步（第二轮
+耗材，板留 T4）。
 
 终局：经管理 API 直读物料权威中 deck 树，断言 T3/T4 分别留下两轮孔板、
 枪头盒全部删除、孔位内容物与两阶段写入一致。
@@ -77,6 +78,8 @@ from .material_flow_graph import (
 )
 
 #: 与 materials_demo/workflows.py 保持一致（smoke 独立运行，不 import 设备包）。
+SITE_LOOP_WORKFLOW_NAME = "位点闭环演示"
+MATERIAL_LOOP_WORKFLOW_NAME = "物料闭环演示"
 SITE_TOUR_WORKFLOW_NAME = "位点操作演示"
 MATERIAL_FLOW_WORKFLOW_NAME = "物料流转演示"
 
@@ -97,7 +100,7 @@ EXPECTED_SITE_POSITIONS = {
     "B2": (180.0, 160.0),
 }
 
-#: 物料闭环里两轮耗材的命名（第 1 轮 = bench proof，第 2 轮 = 工作流）。
+#: 物料闭环里两轮耗材的命名（第 1 轮 =「物料闭环演示」，第 2 轮 =「物料流转演示」）。
 ROUND1_TIPS, ROUND1_PLATE = "bench_tips_r1", "bench_plate_r1"
 ROUND2_TIPS, ROUND2_PLATE = "bench_tips_r2", "bench_plate_r2"
 
@@ -110,70 +113,61 @@ def _occupancy(sites: list[dict[str, Any]]) -> dict[str, str]:
     return {entry["label"]: entry["occupied_by"] for entry in sites}
 
 
-def assert_rack_proof(proof: dict[str, Any], backend: str) -> None:
-    """host 侧 sample_rack 位点闭环断言（HostLink/ROS2 共用）。"""
-
-    assert proof.get("success") is True, f"rack 闭环未成功: {proof}"
-    assert proof.get("backend") == backend, f"backend 不匹配: {proof}"
-
-    # 1) 权威位点与 @device(available_sites=...) 声明逐项一致
-    definition_check = proof["definition_check"]
-    assert definition_check["matches"] is True, f"位点定义漂移: {definition_check}"
-
-    # 2) 初始 4 个位点按声明的网格坐标实例化且全部空闲
-    initial = proof["initial_sites"]
-    assert [entry["label"] for entry in initial] == ["A1", "A2", "B1", "B2"]
-    assert {
-        entry["label"]: (entry["x"], entry["y"]) for entry in initial
-    } == EXPECTED_SITE_POSITIONS
-    assert all(entry["occupied_by"] == "" for entry in initial), initial
-
-    # 3) 装载 A1 -> 转移 B2，占用状态由权威维护
-    assert proof["load"]["success"] is True
-    assert _occupancy(proof["after_load"])["A1"] == "proof-sample"
-    moved = proof["moved"]
-    assert (moved["from_label"], moved["to_label"]) == ("A1", "B2")
-    after_transfer = _occupancy(proof["after_transfer"])
-    assert after_transfer["A1"] == "", after_transfer
-    assert after_transfer["B2"] == "proof-sample", after_transfer
+def _job_values(workflow_proof: dict[str, Any], expected_name: str, count: int) -> list[Any]:
+    assert workflow_proof["workflow_name"] == expected_name
+    assert workflow_proof["task_status"] == "succeeded", f"工作流任务未成功: {workflow_proof}"
+    jobs = workflow_proof["jobs"]
+    assert len(jobs) == count, f"应有 {count} 个节点 job: {jobs}"
+    assert all(job["status"] == "succeeded" for job in jobs), f"存在失败 job: {jobs}"
+    # jobs 按 topological_index 返回；节点 uuid 序 == 声明序
+    return [job["return_info"]["return_value"] for job in jobs]
 
 
-def assert_bench_proof(proof: dict[str, Any], backend: str) -> None:
-    """slave 侧 material_bench 物料 CRUD 闭环断言（第 1 轮耗材）。"""
+def assert_site_loop_workflow(workflow_proof: dict[str, Any], backend: str) -> None:
+    """「位点闭环演示」：核对声明 -> 装载 A1 -> 转移 B2 -> 复查（host 侧 rack，四步）。"""
 
-    assert proof.get("success") is True, f"bench 闭环未成功: {proof}"
-    assert proof.get("backend") == backend, f"backend 不匹配: {proof}"
+    verify, load, moved, inspected = _job_values(workflow_proof, SITE_LOOP_WORKFLOW_NAME, 4)
+
+    # 1) 权威位点与 @device(available_sites=...) 声明逐项一致（不一致该步会直接失败）
+    assert verify["success"] is True and verify["matches"] is True, verify
+    assert verify["backend"] == backend, verify
+    assert [entry["label"] for entry in verify["actual"]] == ["A1", "A2", "B1", "B2"], verify
+    assert {entry["label"]: (entry["x"], entry["y"]) for entry in verify["actual"]} == EXPECTED_SITE_POSITIONS
+
+    # 2) 装载 A1 -> 转移 B2，占用状态由权威维护
+    assert load["success"] is True and load["site_label"] == "A1" and load["sample_name"] == "proof-sample", load
+    assert (moved["from_label"], moved["to_label"]) == ("A1", "B2"), moved
+    assert moved["sample_uuid"] == load["sample_uuid"], (moved, load)
+    after_transfer = _occupancy(inspected["sites"])
+    assert after_transfer == {"A1": "", "A2": "", "B1": "", "B2": "proof-sample"}, after_transfer
+
+
+def assert_material_loop_workflow(workflow_proof: dict[str, Any]) -> None:
+    """「物料闭环演示」：六步跨进程分发到 slave 侧 bench（第 1 轮耗材）。"""
+
+    prepared, provisioned, hydrated, relocated, disposed, report = _job_values(
+        workflow_proof, MATERIAL_LOOP_WORKFLOW_NAME, 6
+    )
 
     # 1) 台面 ensure：固定 uuid 幂等创建，四个位点 T1-T4
-    prepared = proof["prepared"]
     assert prepared["deck_uuid"] == DECK_UUID
     assert prepared["site_labels"] == ["T1", "T2", "T3", "T4"]
 
     # 2) 补给：类名创建的 tip rack 上 T1，草稿创建的孔板上 T2（A1 预置 Water）
-    provisioned = proof["provisioned"]
     assert provisioned["round"] == 1
     assert provisioned["plate_a1_substances"] == [WATER_40], provisioned
-    after_provision = proof["after_provision"]
-    assert after_provision == {
-        "T1": ROUND1_TIPS,
-        "T2": ROUND1_PLATE,
-        "T3": "",
-        "T4": "",
-    }, after_provision
+    assert provisioned["sites"] == {"T1": ROUND1_TIPS, "T2": ROUND1_PLATE, "T3": "", "T4": ""}, provisioned
 
     # 3) 孔位加液：本地 add_liquid + commit 由快照观察者自动上报权威
-    hydrated = proof["hydrated"]
     assert hydrated["well"] == "A2"
     assert hydrated["substances"] == [BUFFER_25], hydrated
 
     # 4) 换位：权威先落位，unload -> load 投影重建了本地实例
-    relocated = proof["relocated"]
     assert relocated["to_site"] == "T3"
     assert relocated["instance_rebuilt"] is True
     assert relocated["sites"]["T2"] == "" and relocated["sites"]["T3"] == ROUND1_PLATE
 
     # 5) 删除：权威递归删除整棵树（根 + 24 个枪头位）并自动释放位点
-    disposed = proof["disposed"]
     assert disposed["deleted_in_authority"] is True
     assert disposed["tips_uuid"] == provisioned["tips_uuid"]
     assert disposed["root_removed"] is True
@@ -181,11 +175,8 @@ def assert_bench_proof(proof: dict[str, Any], backend: str) -> None:
     assert disposed["sites"]["T1"] == "", disposed
 
     # 6) 终态报告：只剩 T3 上的第一轮孔板，孔位内容物齐全
-    report = proof["report"]
     assert report["sites"] == {"T1": "", "T2": "", "T3": ROUND1_PLATE, "T4": ""}
-    assert report["wells"] == {
-        ROUND1_PLATE: {"A1": [WATER_40], "A2": [BUFFER_25]}
-    }, report
+    assert report["wells"] == {ROUND1_PLATE: {"A1": [WATER_40], "A2": [BUFFER_25]}}, report
 
 
 def assert_site_tour_workflow(workflow_proof: dict[str, Any]) -> None:
@@ -375,6 +366,53 @@ def _api_request(
             raise RuntimeError(f"管理 API {method} {path} 返回错误: {body}")
         return body.get("data")
     return body
+
+
+def _wait_runtime_ready(
+    port: int,
+    host: subprocess.Popen[Any],
+    slave: subprocess.Popen[Any] | None,
+    deadline: float,
+) -> None:
+    """等管理 API 就绪、执行面在线、slave 经 HostLink 接入且其设备已登记进权威。
+
+    工作流要跨进程派发到 slave 侧 bench，只有这三件都成立才不会因"设备缺失"在派发前失败。
+    """
+
+    def actions_online(action_names: set[str]) -> bool:
+        # 执行端点快照已上报这些动作能力：调度器此刻才能把 job 派发到设备（ROS2 节点起得慢）
+        endpoints = _api_request(port, "/runtime/endpoints?state=online&limit=100")
+        reported = {
+            capability["action_name"]
+            for endpoint in endpoints
+            for capability in endpoint.get("action_capabilities", [])
+            if capability.get("state", "active") == "active"
+        }
+        return action_names <= reported
+
+    def ready() -> bool:
+        health = _api_request(port, "/health")
+        if health.get("status") != "ok" or health.get("execution") != "ready":
+            return False
+        wanted = {"verify_site_definition", "load_sample"}
+        if slave is not None:
+            if not _api_request(port, "/hostlink/peers").get("peers"):
+                return False
+            # slave 开机图对齐完成：bench 设备根物料出现在权威中
+            _api_request(port, "/materials/instances/by-resource-id/material_bench")
+            wanted |= {"prepare_bench", "fill_well"}
+        return actions_online(wanted)
+
+    while time.monotonic() < deadline:
+        if host.poll() is not None or (slave is not None and slave.poll() is not None):
+            raise RuntimeError("runtime process exited before it became ready")
+        try:
+            if ready():
+                return
+        except (urllib.error.URLError, OSError, ApiError, RuntimeError, AttributeError, KeyError, TypeError):
+            pass
+        time.sleep(0.3)
+    raise RuntimeError("管理 API / slave 接入 / 设备动作能力未在时限内就绪")
 
 
 def run_workflow_stage(
@@ -851,7 +889,7 @@ def run_smoke(
     backend: str = "hostlink",
     timeout: float = 45.0,
 ) -> dict[str, Any]:
-    """启动 host/slave 真实双进程，等待两条闭环 proof，再运行两个工作流。"""
+    """启动 host/slave 真实双进程，等 slave 接入后按顺序经管理 API 运行四个工作流与阶段三。"""
 
     if backend not in {"hostlink", "ros2"}:
         raise ValueError("backend must be hostlink or ros2")
@@ -860,21 +898,10 @@ def run_smoke(
         prefix=f"materials-demo-{backend}-", ignore_cleanup_errors=True
     ) as directory:
         root = Path(directory)
-        rack_proof_path = root / "rack-proof.json"
-        bench_proof_path = root / "bench-proof.json"
         host_log_path = root / "host.log"
         slave_log_path = root / "slave.log"
         environment = os.environ.copy()
-        environment.update(
-            {
-                "MATERIALS_DEMO_PROOF_FILE": str(rack_proof_path),
-                "MATERIALS_DEMO_BENCH_PROOF_FILE": str(bench_proof_path),
-                "MATERIALS_DEMO_START_DELAY": (
-                    "2.0" if backend == "ros2" else "0.5"
-                ),
-                "PYTHONUNBUFFERED": "1",
-            }
-        )
+        environment["PYTHONUNBUFFERED"] = "1"
         hostlink_port = _free_port()
         host_management_port = _free_port()
         host_command = _base_command(
@@ -959,37 +986,27 @@ def run_smoke(
 
                 proofs: dict[str, dict[str, Any]] = {}
                 deadline = time.monotonic() + timeout
-                while time.monotonic() < deadline:
-                    if "rack" not in proofs and rack_proof_path.is_file():
-                        proofs["rack"] = json.loads(
-                            rack_proof_path.read_text(encoding="utf-8")
-                        )
-                    if "bench" not in proofs and bench_proof_path.is_file():
-                        proofs["bench"] = json.loads(
-                            bench_proof_path.read_text(encoding="utf-8")
-                        )
-                    if len(proofs) == 2:
-                        break
-                    if host.poll() is not None or (
-                        slave is not None and slave.poll() is not None
-                    ):
-                        break
-                    time.sleep(0.1)
-                if len(proofs) != 2:
-                    missing = {"rack", "bench"} - set(proofs)
-                    raise RuntimeError(
-                        f"{backend} smoke 未在 {timeout}s 内产出闭环 proof "
-                        f"(缺 {sorted(missing)})\n" + dump_logs()
-                    )
-                for name, proof in proofs.items():
-                    if proof.get("success") is not True:
-                        raise RuntimeError(
-                            f"{name} 闭环失败: {proof}\n" + dump_logs()
-                        )
-                assert_rack_proof(proofs["rack"], backend)
-                assert_bench_proof(proofs["bench"], backend)
+                try:
+                    _wait_runtime_ready(host_management_port, host, slave, deadline)
+                except Exception:
+                    sys.stderr.write("STARTUP FAILED\n" + dump_logs() + "\n")
+                    raise
 
-                # 阶段二：上报结果已在 host 启动时完成，这里逐个真实运行
+                # 阶段一：第一轮闭环——设备不自跑，全部由工作流经管理 API 触发
+                try:
+                    proofs["site_loop_workflow"] = run_workflow_stage(
+                        host_management_port, SITE_LOOP_WORKFLOW_NAME, timeout
+                    )
+                    assert_site_loop_workflow(proofs["site_loop_workflow"], backend)
+                    proofs["material_loop_workflow"] = run_workflow_stage(
+                        host_management_port, MATERIAL_LOOP_WORKFLOW_NAME, timeout
+                    )
+                    assert_material_loop_workflow(proofs["material_loop_workflow"])
+                except Exception:
+                    sys.stderr.write("LOOP STAGE FAILED\n" + dump_logs() + "\n")
+                    raise
+
+                # 阶段二：第二轮
                 try:
                     proofs["site_tour_workflow"] = run_workflow_stage(
                         host_management_port, SITE_TOUR_WORKFLOW_NAME, timeout

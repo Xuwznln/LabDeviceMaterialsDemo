@@ -65,17 +65,17 @@ python -m materials_demo.smoke --backend hostlink --timeout 120
 python -m materials_demo.smoke --backend ros2 --timeout 200
 ```
 
-smoke 启动真实的 host + slave 双进程，推进三个阶段：
+smoke 启动真实的 host + slave 双进程（`unilab -g` 按图创建设备），**设备启动后不自跑任何
+动作**：host 启动时已幂等上报四个 `@workflow` 模板，smoke 全部经管理 HTTP API
+（`POST /api/v1/workflow-tasks`）真实运行并从节点结果断言，推进三个阶段：
 
-1. **闭环 proof**（并行）：host 上 rack 执行「装载 A1 -> 转移 B2」；
-   slave 上 bench 执行「ensure 台面 -> 创建枪头盒/孔板 -> A2 孔加液 ->
-   孔板换位到 T3 -> 废弃枪头盒」。两侧各写出可机读 proof 文件，逐字段
-   断言。
-2. **工作流 + 权威终态**：host 启动时已幂等上报两个 `@workflow` 模板，smoke 经管理
-   HTTP API 逐个真实运行——「位点操作演示」（3 步，host 侧 rack）与
-   「物料流转演示」（5 步，跨进程分发到 slave 侧 bench，补给第二轮
-   耗材）；随后直读物料权威中的 deck 树，断言 T3/T4 分别留下两轮
-   孔板、枪头盒全部删除、孔位内容物与两阶段写入一致。
+1. **第一轮闭环**：「位点闭环演示」（4 步，host 侧 rack）——`verify_site_definition`
+   把权威位点与 `@device(available_sites=...)` 声明逐项核对 -> 装载 A1 -> 转移 B2 ->
+   复查；「物料闭环演示」（6 步，跨进程分发到 slave 侧 bench）——ensure 台面 -> 创建
+   枪头盒/孔板 -> A2 孔加液 -> 孔板换位到 T3 -> 废弃枪头盒 -> 台面报告。
+2. **第二轮 + 权威终态**：「位点操作演示」（3 步，A2 -> B1）与「物料流转演示」
+   （5 步，补给第二轮耗材，板留 T4）；随后直读物料权威中的 deck 树，断言 T3/T4 分别
+   留下两轮孔板、枪头盒全部删除、孔位内容物与两轮写入一致。
 3. **出库装板并加液**（设备已在，其余全是网页按钮背后的同一 HTTP 调用）：
    - 「库存 → 入库 → 按件登记」`POST /api/v1/materials/instantiate` 两块 `demo_plate_24`；
    - 「库存 → 入库 → 按量登记」`POST /api/v1/materials/lots/inbound` 只入 **500 ul** 水；
@@ -118,10 +118,16 @@ python -m unilabos --backend hostlink --skip_env_check --is_slave \
 
 ## 默认子工作流（`materials_demo/workflows.py`）
 
+设备启动后不自跑任何动作，两轮闭环都是 `@workflow`，由管理 API 触发：
+
+- **位点闭环演示** —— 首步 `ctx.run_template("sample_rack_demo/verify_site_definition")`
+  核对权威位点与声明一致（不一致该步直接失败），随后装载 A1 -> 转移 B2 -> 复查；
+- **物料闭环演示** —— 六步全部用显式 `ctx.run("material_bench/...")`：准备台面 ->
+  补给 -> A2 加液 -> 换位 T3 -> 废弃枪头盒 -> 报告；
 - **位点操作演示** —— `ctx.run_template("sample_rack_demo/load_sample")`
   自动填充 device_id（该类在 host 图中只有一个实例），后续步骤用
   `ctx.run("sample_rack/...")` 显式指定；
-- **物料流转演示** —— 五步全部用显式 `ctx.run("material_bench/...")`：
+- **物料流转演示** —— 第二轮五步，同样显式 `ctx.run("material_bench/...")`：
   bench 在 slave 图中，host 上报时无法按类名解析实例。
 
 位点参数演示两种风格：`load_sample(site=...)` 与 `relocate_plate(to_site=...)`
@@ -162,10 +168,10 @@ uuid/label 统一解析）；`transfer_sample(from_label/to_label)` 与
 graph/host.json                    host 图：sample_rack（含位点实例）
 graph/slave.json                   slave 图：material_bench + deck 配置
 materials_demo/
-  sample_rack.py                   @device available_sites 声明 + 三个位点动作
-  material_bench.py                slave 侧物料 CRUD 设备（六个动作 + proof；fill_well 消费库存分配）
+  sample_rack.py                   @device available_sites 声明 + 四个位点动作（含 verify_site_definition；不自跑）
+  material_bench.py                slave 侧物料 CRUD 设备（七个动作；fill_well 消费库存分配；不自跑）
   labware.py                       @resource 台面 / 枪头盒 / 12 孔板 / 24 孔板 / 试剂水
-  workflows.py                     两个 @workflow 默认子工作流（阶段二）
+  workflows.py                     四个 @workflow 默认子工作流（两轮闭环）
   material_flow_graph.py           阶段三经 API 上传的三节点图 + 固定身份与数字（不依赖 unilabos）
   smoke.py                         有终止条件的双进程真实运行时证明
 tests/test_hostlink_smoke.py       HostLink 集成断言

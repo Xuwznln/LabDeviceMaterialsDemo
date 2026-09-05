@@ -75,19 +75,23 @@ python -m materials_demo.smoke --backend hostlink --timeout 120
 python -m materials_demo.smoke --backend ros2 --timeout 200
 ```
 
-The smoke boots real host + slave processes and drives three stages:
+The smoke boots real host + slave processes (`unilab -g` creates the devices
+from the graphs). **Devices never act on their own**: four `@workflow`
+templates are reported at host startup and the smoke runs every one of them
+through the management HTTP API (`POST /api/v1/workflow-tasks`), asserting
+node results only. Three stages:
 
-1. **Closed-loop proofs** (parallel): the rack runs "load A1 -> transfer to
-   B2" on the host; the bench runs "ensure deck -> create tips/plate ->
-   hydrate well A2 -> relocate plate to T3 -> dispose tips" on the slave.
-   Both write machine-readable proof files that are asserted field by field.
-2. **Workflows + authority final state**: two `@workflow` templates were
-   idempotently reported at host startup; the smoke runs both through the
-   management HTTP API — "位点操作演示" (3 steps on the host rack) and
-   "物料流转演示" (5 steps dispatched cross-process to the slave bench,
-   provisioning a second round of labware). The deck tree is then read back
-   from the materials authority; T3/T4 must hold the two plates, every tip
-   rack must be gone, and well substances must match both stages' writes.
+1. **First closed-loop round**: "位点闭环演示" (4 steps on the host rack) —
+   `verify_site_definition` checks the authoritative sites against the
+   `@device(available_sites=...)` declaration item by item, then load A1 ->
+   transfer to B2 -> inspect; "物料闭环演示" (6 steps dispatched cross-process
+   to the slave bench) — ensure deck -> create tips/plate -> hydrate well A2 ->
+   relocate plate to T3 -> dispose tips -> report.
+2. **Second round + authority final state**: "位点操作演示" (3 steps, A2 -> B1)
+   and "物料流转演示" (5 steps, second round of labware, plate left on T4). The
+   deck tree is then read back from the materials authority; T3/T4 must hold
+   the two plates, every tip rack must be gone, and well substances must match
+   both rounds' writes.
 3. **Outbound plate + fill** (devices already exist; everything else is the
    same HTTP call a web button makes):
    - "Inventory → inbound → per item": `POST /api/v1/materials/instantiate`
@@ -142,10 +146,19 @@ materials link.
 
 ## Default sub-workflows (`materials_demo/workflows.py`)
 
+Devices never act on their own; both closed-loop rounds are `@workflow`s
+triggered through the management API:
+
+- **位点闭环演示** — first step
+  `ctx.run_template("sample_rack_demo/verify_site_definition")` checks the
+  authoritative sites against the declaration (the step fails on any drift),
+  then load A1 -> transfer to B2 -> inspect;
+- **物料闭环演示** — six explicit `ctx.run("material_bench/...")` steps:
+  prepare deck -> provision -> hydrate A2 -> relocate to T3 -> dispose tips -> report;
 - **位点操作演示** — `ctx.run_template("sample_rack_demo/load_sample")`
   auto-fills the device id (single instance of the class in the host graph),
   the next steps use explicit `ctx.run("sample_rack/...")`;
-- **物料流转演示** — all five steps use explicit
+- **物料流转演示** — the second round, again all explicit
   `ctx.run("material_bench/...")`: the bench lives in the slave graph, so
   class-based auto-fill is not available to the host at report time.
 
@@ -195,11 +208,11 @@ bench locates the deck by name in its own tracker and mounts the plate.
 graph/host.json                    host graph: sample_rack (site instances included)
 graph/slave.json                   slave graph: material_bench + deck config
 materials_demo/
-  sample_rack.py                   @device available_sites declaration + three site actions
-  material_bench.py                slave-side material CRUD device (six actions + proof; fill_well consumes the inventory allocation)
+  sample_rack.py                   @device available_sites declaration + four site actions (incl. verify_site_definition; no self-run)
+  material_bench.py                slave-side material CRUD device (seven actions; fill_well consumes the inventory allocation; no self-run)
   labware.py                       @resource deck / tip rack / 12-well plate / 24-well plate / water
-  workflows.py                     two @workflow default sub-workflows (stage 2)
+  workflows.py                     four @workflow default sub-workflows (two closed-loop rounds)
   material_flow_graph.py           stage-3 API-uploaded three-node graph + fixed identities and numbers (no unilabos import)
-  smoke.py                         terminating dual-process real-runtime proof
+  smoke.py                         terminating dual-process real-runtime smoke (workflow-driven)
 tests/test_hostlink_smoke.py       HostLink integration assertions
 ```
