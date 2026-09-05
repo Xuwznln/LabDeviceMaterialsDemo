@@ -12,7 +12,7 @@
   加液取 T1 上那块板；
 - 库存需求写在 ``meta_data.inventory_requirements``（``InventoryRequirement`` 形态）：
   出库节点声明一件 ``material``（按模板选一块 active 的板），加液节点声明一份
-  ``reagent``（按模板 FIFO 选 lot）。调度器在任务启动时对整张任务 all-or-nothing 预留，
+  ``lot``（按模板 FIFO 选 lot）。调度器在任务启动时对整张任务 all-or-nothing 预留，
   任一不足则整张任务 ``plan_not_executable``，两个节点都不会派发；预留成功后把解析出的
   分配注入需求 ``key`` 同名的动作参数（``apply_deduct_resource(resource={"uuid": ...})``、
   ``fill_well(water={"quantity", "unit", "lots": [...]})``）。
@@ -141,7 +141,7 @@ def build_flow_graph(
         inventory=[
             {
                 "key": "water",
-                "kind": "reagent",
+                "kind": "lot",
                 "template_uuid": water_template_uuid,
                 "quantity": FILL_VOLUME_UL,
                 "unit": WATER_UNIT,

@@ -15,7 +15,7 @@
   交给 host_node/apply_deduct_resource 出库挂到台面；
 - ``demo_reagent_water``  水。阶段三**按量**登记：以 lot 挂在模板下
   （`POST /materials/lots/inbound`），工作流用
-  ``{"kind": "reagent", "template_uuid": ..., "quantity": ..., "unit": "ul"}`` 声明需求，
+  ``{"kind": "lot", "template_uuid": ..., "quantity": ..., "unit": "ul"}`` 声明需求，
   调度器按 lot FIFO 预留、动作开始前扣减。
 
 按件 / 按量是两种账目形态，不是"耗材 / 试剂"的分类：板也可以按量记（散装），
@@ -323,7 +323,7 @@ def demo_plate_24(name: str) -> Plate:
 @resource(
     id="demo_reagent_water",
     category=["reagent"],
-    description="演示试剂：水。按量登记：以 lot 挂在模板下（单位 ul），工作流的 reagent 需求按 lot 预留与扣减",
+    description="演示试剂：水。按量登记：以 lot 挂在模板下（单位 ul），工作流的 lot 需求按 lot 预留与扣减",
     display_name="演示试剂：水",
 )
 def demo_reagent_water(name: str) -> Container:

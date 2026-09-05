@@ -25,7 +25,7 @@
 2. 「库存 → 入库 → 按量登记」``POST /materials/lots/inbound`` 只入 500 ul 水（故意不够）；
 3. 「编排画布 → 提交」``POST /workflows`` + ``PUT /workflows/{uuid}/graph`` 上传三节点图
    （host_node/apply_deduct_resource 出库挂到 T1 → material_bench/fill_well → bench_report；
-   一件 material 需求 + 一份 reagent 需求；挂载目标只给台面名字，不写任何 uuid）；
+   一件 material 需求 + 一份 lot 需求；挂载目标只给台面名字，不写任何 uuid）；
 4. 客户端预检（画布 dry-run 等价物）：水短缺 700 ul、板可用 2 件——只提示不阻断；
 5. ``POST /workflow-tasks``：调度器整任务 all-or-nothing 预留 → 水不足 → ``failed`` /
    ``plan_not_executable`` / ``short by 700 ul``；三个节点 ``canceled``；**板也没被预留**、

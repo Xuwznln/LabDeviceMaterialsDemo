@@ -46,7 +46,7 @@ reaches the host's materials authority through HostLink.
   workflow's `material` requirement;
 - `demo_reagent_water` — water, registered **by quantity** in stage 3
   (`POST /materials/lots/inbound`, lots under the template, unit ul), reserved
-  and deducted by the workflow's `reagent` requirement.
+  and deducted by the workflow's `lot` requirement.
 
 Per-item vs by-quantity are two ledger shapes, not a "consumable vs reagent"
 split: a plate can be tracked by quantity (bulk) and a reagent bottle per item
@@ -97,7 +97,7 @@ The smoke boots real host + slave processes and drives three stages:
    - "Editor → submit": `POST /api/v1/workflows` + `PUT /api/v1/workflows/{uuid}/graph`
      upload a three-node graph: `host_node/apply_deduct_resource` (`material`
      requirement: one plate; `mount_resource={"name": "bench_deck"}`,
-     `slot_on_deck="T1"`) → `material_bench/fill_well` (`reagent` requirement:
+     `slot_on_deck="T1"`) → `material_bench/fill_well` (`lot` requirement:
      1200 ul water) → `material_bench/bench_report`;
    - client-side precheck (the editor's dry-run equivalent) reports "2 plates
      available, water short by 700 ul" — a hint only, it does not block;
@@ -176,7 +176,7 @@ way the editor canvas does it, with the same node contract: `type=device_action`
 # outbound node: no `resource` param — the scheduler injects the picked plate {"uuid": ...} under key=resource
 {"key": "resource", "kind": "material", "template_uuid": <template uuid of demo_plate_24>}
 # fill node: no `water` param — the scheduler injects {"quantity", "unit", "lots": [{"lot_uuid", "quantity"}]}
-{"key": "water", "kind": "reagent", "template_uuid": <template uuid of demo_reagent_water>,
+{"key": "water", "kind": "lot", "template_uuid": <template uuid of demo_reagent_water>,
  "quantity": 1200.0, "unit": "ul"}
 ```
 

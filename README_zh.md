@@ -37,7 +37,7 @@
 - `demo_plate_24` —— 6x4 孔板（单孔 2000 ul），阶段三**按件登记**
   （`POST /materials/instantiate`，每件一个 uuid），由工作流的 `material` 需求选中出库；
 - `demo_reagent_water` —— 水，阶段三**按量登记**（`POST /materials/lots/inbound`，
-  以 lot 挂在模板下，单位 ul），由工作流的 `reagent` 需求预留与扣减。
+  以 lot 挂在模板下，单位 ul），由工作流的 `lot` 需求预留与扣减。
 
 按件 / 按量是两种账目形态，与"耗材 / 试剂"无关：板也可以按量记（散装），试剂瓶也
 可以按件记（有 uuid、能放到位点）。
@@ -82,7 +82,7 @@ smoke 启动真实的 host + slave 双进程，推进三个阶段：
    - 「编排画布 → 提交」`POST /api/v1/workflows` + `PUT /api/v1/workflows/{uuid}/graph`
      上传三节点图：`host_node/apply_deduct_resource`（`material` 需求：一块板；
      `mount_resource={"name": "bench_deck"}`，`slot_on_deck="T1"`）→
-     `material_bench/fill_well`（`reagent` 需求：1200 ul 水）→ `material_bench/bench_report`；
+     `material_bench/fill_well`（`lot` 需求：1200 ul 水）→ `material_bench/bench_report`；
    - 客户端预检（画布 dry-run 等价物）算出「板可用 2 件、水短缺 700 ul」——只提示不阻断；
    - `POST /api/v1/workflow-tasks`：调度器整任务 all-or-nothing 预留 → 任务 `failed` /
      `plan_not_executable` / `requirement 'water' is short by 700 ul`，三个节点 `canceled`；
@@ -146,7 +146,7 @@ uuid/label 统一解析）；`transfer_sample(from_label/to_label)` 与
 # 出库节点：resource 参数不写，由调度器按需求 key=resource 注入选中的板 {"uuid": ...}
 {"key": "resource", "kind": "material", "template_uuid": <demo_plate_24 的模板 uuid>}
 # 加液节点：water 参数不写，由调度器注入 {"quantity", "unit", "lots": [{"lot_uuid", "quantity"}]}
-{"key": "water", "kind": "reagent", "template_uuid": <demo_reagent_water 的模板 uuid>,
+{"key": "water", "kind": "lot", "template_uuid": <demo_reagent_water 的模板 uuid>,
  "quantity": 1200.0, "unit": "ul"}
 ```
 

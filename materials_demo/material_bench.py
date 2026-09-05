@@ -15,7 +15,7 @@
   随后本地卸载实例；
 - ``bench_report``       从权威读取台面终态：位点占用 + 各板孔位内容物；
 - ``fill_well``          阶段三「出库装板并加液」的消耗方：``water`` 是调度器按节点
-  reagent 需求注入的权威分配 ``{"quantity", "unit", "lots": [...]}``，本设备**不选 lot、
+  lot 需求注入的权威分配 ``{"quantity", "unit", "lots": [...]}``，本设备**不选 lot、
   不扣数量**（预留与扣减在调度器 / 执行面完成），只把体积加进指定台面位点上那块板的
   孔位——板是前一节点 ``host_node/apply_deduct_resource`` 出库挂上来的，用自己的
   resource tracker 按位点定位，不需要任何 uuid 参数。
