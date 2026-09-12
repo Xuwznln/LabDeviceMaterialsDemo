@@ -902,6 +902,7 @@ def run_smoke(
         slave_log_path = root / "slave.log"
         environment = os.environ.copy()
         environment["PYTHONUNBUFFERED"] = "1"
+        environment["MATERIALS_DEMO_SKIP_AUTO_PREPARE"] = "1"
         hostlink_port = _free_port()
         host_management_port = _free_port()
         host_command = _base_command(

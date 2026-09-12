@@ -20,12 +20,14 @@
   孔位——板是前一节点 ``host_node/apply_deduct_resource`` 出库挂上来的，用自己的
   resource tracker 按位点定位，不需要任何 uuid 参数。
 
-设备启动后不自跑任何动作：「prepare -> provision -> hydrate -> relocate -> dispose ->
-report」闭环由 ``workflows.py`` 的 @workflow 经管理 API 跨进程触发，断言只看各节点返回值。
+设备默认在启动时幂等准备台面，不自动运行补给、加液等实验步骤。
+设置 MATERIALS_DEMO_SKIP_AUTO_PREPARE（任意值，包括空串）跳过自动准备；
+测试由工作流显式执行 prepare，继续验证空台面创建与后续 CRUD 闭环。
 """
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -78,6 +80,9 @@ class MaterialBenchDemo:
     @not_action
     def post_init(self, node: Any) -> None:
         self._device_node = node
+        # 测试显式从空台面开始；用户直接启动则幂等准备，不自动执行实验流程。
+        if "MATERIALS_DEMO_SKIP_AUTO_PREPARE" not in os.environ:
+            self.prepare_bench()
 
     @property
     @topic_config(period=1.0)
@@ -205,6 +210,10 @@ class MaterialBenchDemo:
         from unilabos.resources import materials
 
         node = self._device_node
+        # 先验证前置条件，禁止先创建耗材、挂载时才发现台面缺失。
+        deck = node.resource_tracker.uuid_to_resources.get(self.deck_uuid)
+        if deck is None:
+            raise ValueError("台面尚未准备：请先执行 material_bench/prepare_bench，再执行 provision_labware")
         self._round += 1
         current_round = self._round
 
@@ -214,7 +223,7 @@ class MaterialBenchDemo:
             name=f"bench_tips_r{current_round}",
             node=node,
         )
-        materials.assign(node, tips, parent=self.deck_name, slot=tips_site)
+        materials.assign(node, tips, parent=deck, slot=tips_site)
 
         # 路径二：本地草稿创建（A1 预置 Water），权威发号返回权威实例。
         draft = demo_plate_12(f"bench_plate_r{current_round}")
@@ -222,7 +231,7 @@ class MaterialBenchDemo:
             draft.get_well("A1"), "Water", float(water_volume)
         )
         plate = materials.create(draft, node=node)
-        materials.assign(node, plate, parent=self.deck_name, slot=plate_site)
+        materials.assign(node, plate, parent=deck, slot=plate_site)
 
         self._tips_uuid = str(tips.unilabos_uuid)
         self._plate_uuid = str(plate.unilabos_uuid)

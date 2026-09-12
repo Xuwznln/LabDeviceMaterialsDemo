@@ -178,20 +178,20 @@ def site_tour(ctx: WorkflowBuildContext) -> None:
 @workflow(
     display_name=MATERIAL_FLOW_WORKFLOW_NAME,
     description=(
-        "第二轮物料 CRUD：补给耗材（T1/T2）-> B1 加液 -> 板换位到 T4 -> "
-        "废弃枪头盒 -> 台面报告（第一轮已把板留在 T3）"
+        "物料 CRUD：补给耗材（T1/T2）-> B1 加液 -> 板换位到 T4 -> "
+        "废弃枪头盒 -> 台面报告；可独立运行，也可接续第一轮"
     ),
     tags=["materials-demo", "materials"],
     guide=WorkflowGuide(
         preparation=[
-            "先跑一遍「物料闭环演示」：它会 ensure 台面并把第一块板留在 T3；本模板不再准备台面。",
+            "默认启动时自动准备台面；若设置 MATERIALS_DEMO_SKIP_AUTO_PREPARE，请先运行「准备台面」或「物料闭环演示」。",
             "「设备」页确认 slave 侧 material_bench 在线；「物料」页里台面的 T1、T2、T4 位点应为空。",
             "无需手动出库：新的枪头盒与 12 孔板由「补给耗材」创建并挂到 T1/T2。",
         ],
         expected=[
             "任务 succeeded，五步全部成功。",
-            "「物料」页里台面 T3 有第一轮的板、T4 有第二轮的板（B1 有 Dye 15 µL），T1 的枪头盒已删除。",
-            "「台面报告」列出两块板及各自孔位内容物。",
+            "T4 有本轮板（B1 有 Dye 15 µL），T1 的枪头盒已删除；已有 T3 板保持不变。",
+            "「台面报告」列出现有板及各自孔位内容物。",
         ],
     ),
 )
@@ -215,7 +215,7 @@ def material_flow(ctx: WorkflowBuildContext) -> None:
         "material_bench/relocate_plate",
         {"to_site": "T4"},
         name="转移板位",
-        description="把新板从 T2 换到 T4（第一轮的板仍在 T3）。",
+        description="把新板从 T2 换到 T4；已有 T3 板保持不变。",
     )
     ctx.run(
         "material_bench/dispose_tips",
@@ -227,5 +227,5 @@ def material_flow(ctx: WorkflowBuildContext) -> None:
         "material_bench/bench_report",
         {},
         name="台面报告",
-        description="汇总台面上两块板的孔位内容物。",
+        description="汇总台面上现有板的孔位内容物。",
     )
