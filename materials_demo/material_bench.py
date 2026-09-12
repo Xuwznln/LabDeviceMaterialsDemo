@@ -195,6 +195,13 @@ class MaterialBenchDemo:
         plate_site: str = "T2",
         water_volume: float = 40.0,
     ) -> Dict[str, Any]:
+        """新一轮补给：创建枪头盒与 12 孔板并挂到台面位点。
+
+        Args:
+            tips_site[枪头盒位点]: 新枪头盒挂载的台面位点 label（如 "T1"）。
+            plate_site[孔板位点]: 新 12 孔板挂载的台面位点 label（如 "T2"）。
+            water_volume[A1 预置水量]: 孔板 A1 孔预置 Water 的体积，单位 µL。
+        """
         from unilabos.resources import materials
 
         node = self._device_node
@@ -248,6 +255,13 @@ class MaterialBenchDemo:
         substance: str = "Buffer",
         volume: float = 25.0,
     ) -> Dict[str, Any]:
+        """向当前板的指定孔位加液，等待权威可见后返回孔位内容物。
+
+        Args:
+            well[孔位]: 当前板上的孔位名（如 "A2"、"B1"）。
+            substance[物质]: 加入的液体名称（如 "Buffer"、"Dye"）。
+            volume[体积]: 加液体积，单位 µL。
+        """
         node = self._device_node
         plate = node.resource_tracker.uuid_to_resources[self._plate_uuid]
         target = plate.get_well(well)

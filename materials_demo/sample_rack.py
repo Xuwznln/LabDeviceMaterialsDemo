@@ -332,6 +332,12 @@ class SampleRackDemo:
     def transfer_sample(
         self, from_label: str = "A1", to_label: str = "B2"
     ) -> Dict[str, Any]:
+        """把来源位点上的样品移到目标位点。
+
+        Args:
+            from_label[来源位点]: 样品当前所在位点的 label（如 "A1"），必须已有样品。
+            to_label[目标位点]: 样品要转移到的位点 label（如 "B2"），必须为空。
+        """
         gateway = self._gateway()
         rack = self._rack()
         source = self._resolve_site(rack, from_label)
