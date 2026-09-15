@@ -9,9 +9,15 @@ on:
     # GitHub cron 使用 UTC；00:00 UTC = 北京时间 08:00。
     - cron: "0 0 * * *"
   workflow_dispatch:
+    inputs:
+      core_ref:
+        description: 'Uni-Lab-OS runtime branch or full commit SHA; empty uses the verified pin'
+        required: false
+        default: ''
+        type: string
 
 env:
-  STABLE_CORE_REF: 9970aa3a4b99242d9f0874c6862ce9b321070447
+  STABLE_CORE_REF: f5e173ec07804ef47714e921c30548c0d96a95e5
 
 jobs:
   prepare:
@@ -23,8 +29,16 @@ jobs:
       - name: Resolve stable or latest dev Core SHA
         id: core
         shell: bash
+        env:
+          REQUESTED_CORE_REF: ${{ inputs.core_ref }}
         run: |
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+          if [[ -n "$REQUESTED_CORE_REF" ]]; then
+            if [[ "$REQUESTED_CORE_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+              sha="$REQUESTED_CORE_REF"
+            else
+              sha="$(git ls-remote https://github.com/deepmodeling/Uni-Lab-OS.git "refs/heads/$REQUESTED_CORE_REF" | awk '{print $1}')"
+            fi
+          elif [[ "${{ github.event_name }}" == "schedule" ]]; then
             sha="$(git ls-remote https://github.com/deepmodeling/Uni-Lab-OS.git refs/heads/dev | awk '{print $1}')"
           else
             sha="$STABLE_CORE_REF"
@@ -37,7 +51,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/unilab-dev-tested
-          key: materials-demo-dev-smoke-${{ steps.core.outputs.sha }}
+          key: materials-demo-dev-smoke-v2-${{ steps.core.outputs.sha }}-${{ github.sha }}
       - name: Decide whether runtime smoke is needed
         id: decision
         shell: bash
@@ -69,12 +83,6 @@ jobs:
           repository: deepmodeling/Uni-Lab-OS
           ref: ${{ needs.prepare.outputs.core_sha }}
           path: .ci/unilabos
-      - name: Checkout the installer-capable Uni-Lab-OS CLI
-        uses: actions/checkout@v6
-        with:
-          repository: deepmodeling/Uni-Lab-OS
-          ref: ${{ env.STABLE_CORE_REF }}
-          path: .ci/installer-core
       - uses: conda-incubator/setup-miniconda@v4
         with:
           miniforge-version: latest
@@ -85,6 +93,7 @@ jobs:
           activate-environment: unilab
           auto-update-conda: false
       - name: Install ROS2 and build tools
+        id: install_tools
         shell: bash -el {0}
         run: |
           mamba install -n unilab --override-channels -c conda-forge -c robostack-jazzy \
@@ -96,6 +105,7 @@ jobs:
             robostack-jazzy::ros-jazzy-tf-transformations robostack-jazzy::ros-jazzy-tf2-ros \
             robostack-jazzy::ros-jazzy-tf2-ros-py conda-forge::transforms3d -y
       - name: Build unilabos_msgs and install runtime from GitHub
+        id: install_runtime
         shell: bash -el {0}
         run: |
           colcon build --base-paths .ci/unilabos/unilabos_msgs \
@@ -106,10 +116,9 @@ jobs:
           source .ci/install/unilabos_msgs/setup.bash
           uv pip install -r .ci/unilabos/unilabos/utils/requirements.txt
           uv pip install pywinauto git+https://github.com/Xuwznln/pylabrobot.git@6285d662effa972be97a781ba7493553f2ba94ee
-          uv pip install pytest -e .ci/installer-core
+          uv pip install pytest -e .ci/unilabos
           UNILABOS_BASICCONFIG_BACKEND=hostlink \
             unilab package install "git+https://github.com/$DEMO_REPOSITORY@$DEMO_REF"
-          uv pip install -e .ci/unilabos
           cd "$RUNNER_TEMP"
           python - <<'PY'
           import importlib.metadata
@@ -123,6 +132,12 @@ jobs:
           distribution = importlib.metadata.distribution("materials_demo")
           print(f"installed materials_demo {distribution.version}: {module_path}")
           PY
+      - name: Validate workflow template import contract
+        shell: bash -el {0}
+        run: |
+          source "$GITHUB_WORKSPACE/.ci/install/unilabos_msgs/setup.bash"
+          cd "$RUNNER_TEMP"
+          python -m pytest -q "$GITHUB_WORKSPACE/tests/test_workflow_template_contract.py" --import-mode=importlib -p no:launch_testing -p no:launch_ros
       - name: Validate registry and assert HostLink site contract
         shell: bash -el {0}
         run: |
@@ -148,4 +163,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/unilab-dev-tested
-          key: materials-demo-dev-smoke-${{ needs.prepare.outputs.core_sha }}
+          key: materials-demo-dev-smoke-v2-${{ needs.prepare.outputs.core_sha }}-${{ github.sha }}

@@ -1,6 +1,6 @@
 """有限时启动真实 host/slave 双进程，全部经管理 HTTP API 运行工作流并断言。
 
-设备启动后不自跑任何动作。host 启动时已把 materials_demo/workflows.py 里的四个
+设备启动后只幂等准备台面，不自跑实验动作。host 启动时已把 materials_demo/workflows.py 里的四个
 @workflow 幂等上报到本机 Workflow Authority，本脚本按顺序经 ``POST /workflow-tasks``
 真实运行，断言只看各节点返回值（``/workflow-tasks/{uuid}/jobs``）：
 
@@ -163,7 +163,7 @@ def assert_material_loop_workflow(workflow_proof: dict[str, Any]) -> None:
     assert hydrated["substances"] == [BUFFER_25], hydrated
 
     # 4) 换位：权威先落位，unload -> load 投影重建了本地实例
-    assert relocated["to_site"] == "T3"
+    assert relocated["to_site"] == workflow_proof["site_bindings"]["T3"]
     assert relocated["instance_rebuilt"] is True
     assert relocated["sites"]["T2"] == "" and relocated["sites"]["T3"] == ROUND1_PLATE
 
@@ -226,7 +226,7 @@ def assert_material_flow_workflow(workflow_proof: dict[str, Any]) -> None:
     assert provision["round"] == 2
     assert provision["plate_a1_substances"] == [WATER_40]
     assert hydrate["well"] == "B1" and hydrate["substances"] == [DYE_15]
-    assert relocate["to_site"] == "T4" and relocate["instance_rebuilt"] is True
+    assert relocate["to_site"] == workflow_proof["site_bindings"]["T4"] and relocate["instance_rebuilt"] is True
     assert dispose["deleted_in_authority"] is True
     assert report["sites"] == {
         "T1": "",
@@ -400,6 +400,10 @@ def _wait_runtime_ready(
                 return False
             # slave 开机图对齐完成：bench 设备根物料出现在权威中
             _api_request(port, "/materials/instances/by-resource-id/material_bench")
+            # 模板实例化会把 T1～T4 绑定为权威 Site UUID，必须先有真实台面。
+            deck = _api_request(port, f"/materials/instances/{DECK_UUID}")
+            if {site["label"] for site in deck["sites"]} != {"T1", "T2", "T3", "T4"}:
+                return False
             wanted |= {"prepare_bench", "fill_well"}
         return actions_online(wanted)
 
@@ -418,7 +422,7 @@ def _wait_runtime_ready(
 def run_workflow_stage(
     management_port: int, workflow_name: str, timeout: float
 ) -> dict[str, Any]:
-    """检索上报的默认子工作流 -> 创建任务 -> 等待终态 -> 汇总节点结果。"""
+    """检索模板 -> 实例化（自动解析 Site UUID）-> 创建任务 -> 汇总终态。"""
 
     deadline = time.monotonic() + timeout
 
@@ -426,16 +430,21 @@ def run_workflow_stage(
     while time.monotonic() < deadline:
         try:
             listing = _api_request(
-                management_port, "/workflows?page=1&page_size=50"
+                management_port, "/registry/workflow-templates"
             )
         except (urllib.error.URLError, OSError, ApiError):
             time.sleep(0.3)
             continue
         matches = [
-            item for item in listing["items"] if item["name"] == workflow_name
+            item for item in listing["templates"] if item["display_name"] == workflow_name
         ]
+        assert len(matches) <= 1, f"工作流模板显示名重复: {workflow_name!r}"
         if matches:
-            workflow_uuid = matches[0]["uuid"]
+            instantiated = _api_request(
+                management_port, "/workflows/from-template",
+                {"template_uuid": matches[0]["uuid"], "bindings": {}},
+            )
+            workflow_uuid = instantiated["workflow"]["uuid"]
             break
         time.sleep(0.3)
     if not workflow_uuid:
@@ -459,9 +468,20 @@ def run_workflow_stage(
         raise RuntimeError(f"工作流任务 {task_uuid} 未在 {timeout}s 内结束: {status}")
 
     jobs = _api_request(management_port, f"/workflow-tasks/{task_uuid}/jobs")
+    site_bindings = {}
+    if workflow_name in {MATERIAL_LOOP_WORKFLOW_NAME, MATERIAL_FLOW_WORKFLOW_NAME}:
+        # API 导入已把 T3/T4 绑定成权威 UUID，不能再把 label 当成执行结果的身份。
+        deck = _api_request(management_port, f"/materials/instances/{DECK_UUID}")
+        site_bindings = {site["label"]: site["site_uuid"] for site in deck["sites"]}
+        label, index = ("T3", 3) if workflow_name == MATERIAL_LOOP_WORKFLOW_NAME else ("T4", 2)
+        target = next(site for site in deck["sites"] if site["label"] == label)
+        moved = jobs[index]["return_info"]["return_value"]
+        assert moved["to_site"] == target["site_uuid"], (moved, target)
+        assert moved["plate_uuid"] == target["occupied_material_uuid"], (moved, target)
     return {
         "workflow_uuid": workflow_uuid,
         "workflow_name": workflow_name,
+        "site_bindings": site_bindings,
         "task_uuid": task_uuid,
         "task_status": status,
         # task 级 output 不进公开 HTTP 契约，节点结果一律取 job.return_info
@@ -497,7 +517,7 @@ def read_authority_final_state(management_port: int) -> dict[str, Any]:
     return {
         "site_occupancy": dict(sorted(site_occupancy.items())),
         "class_names": sorted(
-            {node["material"]["class_name"] for node in nodes}
+            {node["material"]["config"]["type"] for node in nodes}
         ),
         "root_children": sorted(
             node["material"]["name"]
@@ -902,7 +922,8 @@ def run_smoke(
         slave_log_path = root / "slave.log"
         environment = os.environ.copy()
         environment["PYTHONUNBUFFERED"] = "1"
-        environment["MATERIALS_DEMO_SKIP_AUTO_PREPARE"] = "1"
+        # 冒烟覆盖用户默认启动路径；禁用自动准备的行为由独立单元测试覆盖。
+        environment.pop("MATERIALS_DEMO_SKIP_AUTO_PREPARE", None)
         hostlink_port = _free_port()
         host_management_port = _free_port()
         host_command = _base_command(

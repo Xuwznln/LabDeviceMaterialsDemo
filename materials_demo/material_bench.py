@@ -22,7 +22,8 @@
 
 设备默认在启动时幂等准备台面，不自动运行补给、加液等实验步骤。
 设置 MATERIALS_DEMO_SKIP_AUTO_PREPARE（任意值，包括空串）跳过自动准备；
-测试由工作流显式执行 prepare，继续验证空台面创建与后续 CRUD 闭环。
+禁用自动准备的行为由单元测试覆盖；集成测试使用默认启动，并由工作流再次
+执行 prepare 验证幂等性及后续 CRUD 闭环。
 """
 
 import asyncio
@@ -80,7 +81,7 @@ class MaterialBenchDemo:
     @not_action
     def post_init(self, node: Any) -> None:
         self._device_node = node
-        # 测试显式从空台面开始；用户直接启动则幂等准备，不自动执行实验流程。
+        # 显式设置环境变量才从空台面开始；默认幂等准备，不自动执行实验流程。
         if "MATERIALS_DEMO_SKIP_AUTO_PREPARE" not in os.environ:
             self.prepare_bench()
 
