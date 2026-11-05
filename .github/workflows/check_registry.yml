@@ -17,7 +17,7 @@ on:
         type: string
 
 env:
-  STABLE_CORE_REF: 1f1fe05b81518972d2947479483296517b2991a4
+  STABLE_CORE_REF: bbee08f31fc6a2bbda22d71c7c34135a89fa2dd6
 
 jobs:
   prepare:
