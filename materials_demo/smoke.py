@@ -45,6 +45,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import secrets
 import socket
 import subprocess
 import sys
@@ -76,6 +77,12 @@ from .material_flow_graph import (
     build_flow_graph,
     step_node_uuid,
 )
+
+# 新版 Uni-Lab-OS 的管理 API 写请求要求控制面 token。本脚本自己拉起运行时，所以由它决定 token：
+# 经环境变量交给运行时，每个请求都放进 X-UniLab-Token；旧版运行时忽略这个变量和请求头。
+CONTROL_TOKEN_ENV = "UNILABOS_BASICCONFIG_CONTROL_TOKEN"
+CONTROL_TOKEN_HEADER = "X-UniLab-Token"
+CONTROL_TOKEN = os.environ.get(CONTROL_TOKEN_ENV, "").strip() or secrets.token_urlsafe(24)
 
 #: 与 materials_demo/workflows.py 保持一致（smoke 独立运行，不 import 设备包）。
 SITE_LOOP_WORKFLOW_NAME = "位点闭环演示"
@@ -353,6 +360,7 @@ def _api_request(
     method = method or ("GET" if payload is None else "POST")
     # GET 不能带 JSON Content-Type：服务端 Backend 路由会尝试解码空 body 而报错
     headers = {"Content-Type": "application/json"} if data is not None else {}
+    headers[CONTROL_TOKEN_HEADER] = CONTROL_TOKEN
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -921,6 +929,7 @@ def run_smoke(
         host_log_path = root / "host.log"
         slave_log_path = root / "slave.log"
         environment = os.environ.copy()
+        environment[CONTROL_TOKEN_ENV] = CONTROL_TOKEN
         environment["PYTHONUNBUFFERED"] = "1"
         # 冒烟覆盖用户默认启动路径；禁用自动准备的行为由独立单元测试覆盖。
         environment.pop("MATERIALS_DEMO_SKIP_AUTO_PREPARE", None)
