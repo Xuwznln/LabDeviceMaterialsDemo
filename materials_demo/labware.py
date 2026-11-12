@@ -10,11 +10,12 @@
 - ``demo_plate_12``       4x3 = 12 孔板，孔位支持 set_substance / 液量追踪，
   演示草稿实例创建与孔位内容物实时上报（阶段一 / 二由 bench 自己创建）；
 - ``demo_plate_24``       6x4 = 24 孔板（2000 ul/孔）。阶段三**按件**登记：网页
-  `POST /materials/instantiate` 每件一个 uuid，工作流用
+  `POST /api/v1/inventory/commands`（materials.v1 ``instantiate_material``）每件一个 uuid，
+  板与 24 孔整棵树一起落权威，工作流用
   ``{"kind": "material", "template_uuid": ...}`` 声明需求，调度器从 active 实例里选一件
   交给 host_node/apply_deduct_resource 出库挂到台面；
 - ``demo_reagent_water``  水。阶段三**按量**登记：以 lot 挂在模板下
-  （`POST /materials/lots/inbound`），工作流用
+  （`POST /api/v1/inventory/commands`，``inventory.inbound`` kind=lot），工作流用
   ``{"kind": "lot", "template_uuid": ..., "quantity": ..., "unit": "ul"}`` 声明需求，
   调度器按 lot FIFO 预留、动作开始前扣减。
 
@@ -238,6 +239,7 @@ def demo_tips_24(name: str) -> TipRack:
         model="demo_tips_24",
         ordered_items=create_ordered_items_2d(
             TipSpot,
+            name_prefix=name,
             num_items_x=6,
             num_items_y=4,
             dx=9.0,
@@ -248,10 +250,14 @@ def demo_tips_24(name: str) -> TipRack:
             size_x=14.0,
             size_y=14.0,
             size_z=0.0,
-            make_tip=lambda: Tip(
+            # PLR 1.0：TipSpot 以枪头名调用 make_tip(name)；Tip 用 diameter / size_z 描述几何
+            # （取代旧的 total_tip_length）。直径为演示值，非实测。
+            make_tip=lambda tip_name: Tip(
+                name=tip_name,
+                diameter=7.0,
+                size_z=60.0,
                 has_filter=False,
                 maximal_volume=300.0,
-                total_tip_length=60.0,
                 fitting_depth=51.0,
             ),
         ),
@@ -274,6 +280,7 @@ def demo_plate_12(name: str) -> Plate:
         model="demo_plate_12",
         ordered_items=create_ordered_items_2d(
             Well,
+            name_prefix=name,
             num_items_x=4,
             num_items_y=3,
             dx=12.0,
@@ -305,6 +312,7 @@ def demo_plate_24(name: str) -> Plate:
         model=FLOW_PLATE_TEMPLATE_NAME,
         ordered_items=create_ordered_items_2d(
             Well,
+            name_prefix=name,
             num_items_x=6,
             num_items_y=4,
             dx=9.0,

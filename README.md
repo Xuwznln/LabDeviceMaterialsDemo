@@ -42,10 +42,12 @@ reaches the host's materials authority through HostLink.
   draft** with `A1` pre-loaded via `set_substance`, well volumes reported
   live by the snapshot observer;
 - `demo_plate_24` — 6x4 well plate (2000 ul wells), registered **per item** in
-  stage 3 (`POST /materials/instantiate`, one uuid each) and picked by the
-  workflow's `material` requirement;
+  stage 3 (`POST /api/v1/inventory/commands` with the materials.v1
+  `instantiate_material` command: one uuid each, the plate and its 24 wells
+  registered as one tree) and picked by the workflow's `material` requirement;
 - `demo_reagent_water` — water, registered **by quantity** in stage 3
-  (`POST /materials/lots/inbound`, lots under the template, unit ul), reserved
+  (`POST /api/v1/inventory/commands`, `inventory.inbound` with `kind: lot`;
+  lots under the template, unit ul), reserved
   and deducted by the workflow's `lot` requirement.
 
 Per-item vs by-quantity are two ledger shapes, not a "consumable vs reagent"
@@ -94,10 +96,10 @@ node results only. Three stages:
    both rounds' writes.
 3. **Outbound plate + fill** (devices already exist; everything else is the
    same HTTP call a web button makes):
-   - "Inventory → inbound → per item": `POST /api/v1/materials/instantiate`
-     two `demo_plate_24`;
-   - "Inventory → inbound → by quantity": `POST /api/v1/materials/lots/inbound`
-     only **500 ul** of water;
+   - "Inventory → inbound → per item": `POST /api/v1/inventory/commands`
+     (`instantiate_material`) two `demo_plate_24`, each a full PLR tree;
+   - "Inventory → inbound → by quantity": `POST /api/v1/inventory/commands`
+     (`inventory.inbound`, `kind: lot`) only **500 ul** of water;
    - "Editor → submit": `POST /api/v1/workflows` + `PUT /api/v1/workflows/{uuid}/graph`
      upload a three-node graph: `host_node/apply_deduct_resource` (`material`
      requirement: one plate; `mount_resource={"name": "bench_deck"}`,
@@ -110,7 +112,7 @@ node results only. Three stages:
      `requirement 'water' is short by 700 ul`, all three node runs `canceled`;
      **the plate was not reserved either** (both still `active`), the lot is
      still `500 / 500 / 0`, no reservation exists, the bench was never called;
-   - restock `POST /api/v1/materials/lots/inbound` 10000 ul → `10500 / 10500 / 0`;
+   - restock with another `inventory.inbound` command, 10000 ul → `10500 / 10500 / 0`;
    - `POST /api/v1/workflow-tasks` again: `succeeded` — `flow_plate_01` is
      picked (`active → reserved → in_use`), host_node fetches the deck by name
      from the authority, infers the target device from the deck's ownership and
