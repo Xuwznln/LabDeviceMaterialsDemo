@@ -10,11 +10,12 @@
 - ``demo_plate_12``       4x3 = 12 孔板，孔位支持 set_substance / 液量追踪，
   演示草稿实例创建与孔位内容物实时上报（阶段一 / 二由 bench 自己创建）；
 - ``demo_plate_24``       6x4 = 24 孔板（2000 ul/孔）。阶段三**按件**登记：网页
-  `POST /materials/instantiate` 每件一个 uuid，工作流用
+  `POST /api/v1/inventory/commands`（materials.v1 ``instantiate_material``）每件一个 uuid，
+  板与 24 孔整棵树一起落权威，工作流用
   ``{"kind": "material", "template_uuid": ...}`` 声明需求，调度器从 active 实例里选一件
   交给 host_node/apply_deduct_resource 出库挂到台面；
 - ``demo_reagent_water``  水。阶段三**按量**登记：以 lot 挂在模板下
-  （`POST /materials/lots/inbound`），工作流用
+  （`POST /api/v1/inventory/commands`，``inventory.inbound`` kind=lot），工作流用
   ``{"kind": "lot", "template_uuid": ..., "quantity": ..., "unit": "ul"}`` 声明需求，
   调度器按 lot FIFO 预留、动作开始前扣减。
 

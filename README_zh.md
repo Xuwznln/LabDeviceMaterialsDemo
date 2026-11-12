@@ -35,9 +35,10 @@
 - `demo_plate_12` —— 4x3 孔板（单孔 2200 ul），演示**本地草稿创建**，
   `A1` 预置 `set_substance`，孔位液量由快照观察者实时上报；
 - `demo_plate_24` —— 6x4 孔板（单孔 2000 ul），阶段三**按件登记**
-  （`POST /materials/instantiate`，每件一个 uuid），由工作流的 `material` 需求选中出库；
-- `demo_reagent_water` —— 水，阶段三**按量登记**（`POST /materials/lots/inbound`，
-  以 lot 挂在模板下，单位 ul），由工作流的 `lot` 需求预留与扣减。
+  （`POST /api/v1/inventory/commands` 的 materials.v1 `instantiate_material` 命令，每件一个 uuid，
+  板与 24 孔整棵树一起落权威），由工作流的 `material` 需求选中出库；
+- `demo_reagent_water` —— 水，阶段三**按量登记**（`POST /api/v1/inventory/commands`，
+  `inventory.inbound` kind=lot，以 lot 挂在模板下，单位 ul），由工作流的 `lot` 需求预留与扣减。
 
 按件 / 按量是两种账目形态，与"耗材 / 试剂"无关：板也可以按量记（散装），试剂瓶也
 可以按件记（有 uuid、能放到位点）。
@@ -77,8 +78,10 @@ smoke 启动真实的 host + slave 双进程（`unilab -g` 按图创建设备）
    （5 步，补给第二轮耗材，板留 T4）；随后直读物料权威中的 deck 树，断言 T3/T4 分别
    留下两轮孔板、枪头盒全部删除、孔位内容物与两轮写入一致。
 3. **出库装板并加液**（设备已在，其余全是网页按钮背后的同一 HTTP 调用）：
-   - 「库存 → 入库 → 按件登记」`POST /api/v1/materials/instantiate` 两块 `demo_plate_24`；
-   - 「库存 → 入库 → 按量登记」`POST /api/v1/materials/lots/inbound` 只入 **500 ul** 水；
+   - 「库存 → 入库 → 按件登记」`POST /api/v1/inventory/commands`（`instantiate_material`）两块
+     `demo_plate_24`，每块整棵 PLR 树；
+   - 「库存 → 入库 → 按量登记」`POST /api/v1/inventory/commands`（`inventory.inbound`，kind=lot）
+     只入 **500 ul** 水；
    - 「编排画布 → 提交」`POST /api/v1/workflows` + `PUT /api/v1/workflows/{uuid}/graph`
      上传三节点图：`host_node/apply_deduct_resource`（`material` 需求：一块板；
      `mount_resource={"name": "bench_deck"}`，`slot_on_deck="T1"`）→
@@ -87,7 +90,7 @@ smoke 启动真实的 host + slave 双进程（`unilab -g` 按图创建设备）
    - `POST /api/v1/workflow-tasks`：调度器整任务 all-or-nothing 预留 → 任务 `failed` /
      `plan_not_executable` / `requirement 'water' is short by 700 ul`，三个节点 `canceled`；
      **板也没被预留**（两块仍 `active`）、lot 仍 `500 / 500 / 0`、没有 reservation、bench 没被调用；
-   - 补料 `POST /api/v1/materials/lots/inbound` 10000 ul → `10500 / 10500 / 0`；
+   - 补料（再一条 `inventory.inbound` 命令）10000 ul → `10500 / 10500 / 0`；
    - 再 `POST /api/v1/workflow-tasks`：`succeeded`——`flow_plate_01` 被选中（`active → reserved →
      in_use`），host_node 按名字从权威取到台面、由归属推断目标设备、跨进程 `RESOURCE_APPEND`
      挂到 T1；lot 扣 1200 → `9300 / 9300 / 0`；A1 内容物 `["Water", 1200, "ul"]` 落权威；

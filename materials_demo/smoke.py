@@ -22,8 +22,10 @@
 阶段三（出库装板并加液，全部是网页按钮背后的同一 HTTP 调用）：设备已在
 （host/slave 双进程），接着复现网页操作序列——
 
-1. 「库存 → 入库 → 按件登记」``POST /materials/instantiate`` 两块 24 孔板；
-2. 「库存 → 入库 → 按量登记」``POST /materials/lots/inbound`` 只入 500 ul 水（故意不够）；
+1. 「库存 → 入库 → 按件登记」``POST /inventory/commands``（materials.v1 ``instantiate_material``）
+   两块 24 孔板，每块整棵 PLR 树（板 + 24 孔）一个 uuid；
+2. 「库存 → 入库 → 按量登记」``POST /inventory/commands``（``inventory.inbound`` kind=lot）
+   只入 500 ul 水（故意不够）；
 3. 「编排画布 → 提交」``POST /workflows`` + ``PUT /workflows/{uuid}/graph`` 上传三节点图
    （host_node/apply_deduct_resource 出库挂到 T1 → material_bench/fill_well → bench_report；
    一件 material 需求 + 一份 lot 需求；挂载目标只给台面名字，不写任何 uuid）；
@@ -31,12 +33,18 @@
 5. ``POST /workflow-tasks``：调度器整任务 all-or-nothing 预留 → 水不足 → ``failed`` /
    ``plan_not_executable`` / ``short by 700 ul``；三个节点 ``canceled``；**板也没被预留**、
    lot 原样、没有 reservation、bench 没被调用；
-6. 补料 ``POST /materials/lots/inbound`` 10000 ul → 10500；
+6. 补料 ``POST /inventory/commands``（``inventory.inbound`` kind=lot）10000 ul → 10500；
 7. 再 ``POST /workflow-tasks``：``succeeded``——板被选中（active → reserved → in_use），
    host_node 按名字取到台面、由归属推断目标设备、跨进程 RESOURCE_APPEND 挂到 T1；
    lot 扣 1200 → 9300；A1 内容物 ``["Water", 1200, "ul"]`` 落权威；报告与权威直查一致。
 
 失败后是**新任务**而不是原任务重试：``plan_not_executable`` 是终态，补料后重新提交。
+
+管理 API 走 V1 合同：除 ``/health`` 与 ``POST /inventory/commands``（裸结果
+``{command_id, status, result | error, ...}``）外都是 ``{"code": 0, "data": ...}`` 信封；库存读在
+``/inventory/{templates,lots,instances,reservations}``（具名数组），dev 独有的
+``/materials/instances/by-resource-id/{id}`` 与 ``/materials/instances/{uuid}/tree`` 不变；写操作一律
+带 ``X-UniLab-Token``。
 """
 
 from __future__ import annotations
@@ -56,7 +64,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Sequence
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
 
 from .material_flow_graph import (
     BENCH_DECK_NAME,
@@ -353,8 +361,11 @@ def _api_request(
     *,
     method: str | None = None,
     timeout: float = 15.0,
+    raw: bool = False,
 ) -> Any:
-    """请求管理 API；workflow 风格 {"code":0,"data":...} 自动解包，其余路由原样返回。"""
+    """请求管理 API；V1 信封 ``{"code":0,"data":...}``（无数据的命令只有 ``{"code":0}``）自动解包，
+    业务码非 0 抛错。``raw=True`` 原样返回：``POST /inventory/commands`` 的裸结果在拒绝时也带
+    ``code`` / ``error``，不能当信封解。``/health`` 不包信封，按原样返回。"""
 
     url = f"http://127.0.0.1:{port}/api/v1{path}"
     data = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -365,12 +376,14 @@ def _api_request(
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read()
+            content = response.read()
     except urllib.error.HTTPError as exc:
         text = exc.read().decode("utf-8", errors="replace")
         raise ApiError(exc.code, text, f"{method} {path} -> HTTP {exc.code}: {text}") from None
-    body = json.loads(raw.decode("utf-8")) if raw else None
-    if isinstance(body, dict) and "code" in body and ("data" in body or "error" in body):
+    body = json.loads(content.decode("utf-8")) if content else None
+    if raw:
+        return body
+    if isinstance(body, dict) and "code" in body and set(body) <= {"code", "data", "error"}:
         if body["code"] != 0:
             raise RuntimeError(f"管理 API {method} {path} 返回错误: {body}")
         return body.get("data")
@@ -410,7 +423,7 @@ def _wait_runtime_ready(
             # slave 开机图对齐完成：bench 设备根物料出现在权威中
             _api_request(port, "/materials/instances/by-resource-id/material_bench")
             # 模板实例化会把 T1～T4 绑定为权威 Site UUID，必须先有真实台面。
-            deck = _api_request(port, f"/materials/instances/{DECK_UUID}")
+            deck = _api_request(port, f"/inventory/instances/{DECK_UUID}")
             if {site["label"] for site in deck["sites"]} != {"T1", "T2", "T3", "T4"}:
                 return False
             wanted |= {"prepare_bench", "fill_well"}
@@ -480,7 +493,7 @@ def run_workflow_stage(
     site_bindings = {}
     if workflow_name in {MATERIAL_LOOP_WORKFLOW_NAME, MATERIAL_FLOW_WORKFLOW_NAME}:
         # API 导入已把 T3/T4 绑定成权威 UUID，不能再把 label 当成执行结果的身份。
-        deck = _api_request(management_port, f"/materials/instances/{DECK_UUID}")
+        deck = _api_request(management_port, f"/inventory/instances/{DECK_UUID}")
         site_bindings = {site["label"]: site["site_uuid"] for site in deck["sites"]}
         label, index = ("T3", 3) if workflow_name == MATERIAL_LOOP_WORKFLOW_NAME else ("T4", 2)
         target = next(site for site in deck["sites"] if site["label"] == label)
@@ -554,17 +567,44 @@ def assert_authority_final_state(state: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
+#: 网页操作员身份（写命令的 actor）。
+OPERATOR = "materials-demo-operator"
+
+
+def _command_id(*parts: str) -> str:
+    """阶段三写命令的幂等身份：同一步骤的命令 id 固定，重放返回首次结果（板不会多建、lot 不会重复累加）。"""
+
+    return str(uuid5(NAMESPACE_URL, "unilabos://materials-demo/" + "/".join(parts)))
+
+
+def inventory_command(port: int, command: dict[str, Any]) -> dict[str, Any]:
+    """``POST /inventory/commands``：库存写入的唯一入口。
+
+    它不包信封，返回裸结果 ``{command_id, status, result | error, error_code, replayed}``，业务拒绝也是
+    HTTP 200，所以按 ``status`` 判断成败；拒绝时抛出，消息里带 ``error_code``。
+    """
+
+    result = _api_request(port, "/inventory/commands", command, raw=True)
+    if not isinstance(result, dict) or result.get("status") != "completed":
+        kind = command.get("type") or command.get("operation")
+        raise RuntimeError(f"库存命令 {kind} 未完成: {result}")
+    return result
+
+
 def _mutation(operation: str, effect_key: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """materials.v1 写信封；浏览器 / 操作员发起的写操作 actor_type 用 human。"""
+    """materials.v1 变更信封（同样提交到 ``/inventory/commands``）；操作员发起的写 actor_type 用 human。
+
+    ``command_uuid`` 由 ``effect_key`` 决定、不带 ``observed_at_ms``：重放的请求哈希与首次一致，
+    权威按 (command_uuid, effect_key) 返回首次结果。
+    """
 
     return {
         "protocol_version": "materials.v1",
-        "command_uuid": str(uuid4()),
+        "command_uuid": _command_id(effect_key),
         "effect_key": effect_key,
         "operation": operation,
         "actor_type": "human",
-        "actor_uuid": "materials-demo-operator",
-        "observed_at_ms": int(time.time() * 1000),
+        "actor_uuid": OPERATOR,
         "preconditions": [],
         "payload": payload,
     }
@@ -576,8 +616,9 @@ def flow_templates(port: int) -> dict[str, str]:
     wanted = {FLOW_PLATE_TEMPLATE_NAME, WATER_TEMPLATE_NAME}
     found = {
         item["name"]: item["template_uuid"]
-        for item in _api_request(port, "/materials/templates?include_definition=false")
-        if item["name"] in wanted
+        for name in sorted(wanted)
+        for item in _api_request(port, f"/inventory/templates?name={urllib.parse.quote(name)}")["templates"]
+        if item["name"] == name
     }
     missing = wanted - set(found)
     if missing:
@@ -586,46 +627,51 @@ def flow_templates(port: int) -> dict[str, str]:
 
 
 def instantiate_plate(port: int, name: str) -> str:
-    """「入库 → 按件登记」：按注册表资源类实例化一块板，权威发 uuid，进入在库物料。"""
+    """「入库 → 按件登记」：按注册表资源类实例化一块板，权威发 uuid，进入在库物料。
 
-    result = _api_request(
+    用 materials.v1 ``instantiate_material``（经 ``/inventory/commands``）：它在 Host 内用 PLR 实例化
+    整棵树（板 + 24 孔）一次落权威。V1 类型化 ``inventory.inbound``（kind=instance）与
+    ``POST /materials`` 都只建根节点、不展开孔位，加液需要的 A1 孔就不存在。
+    """
+
+    result = inventory_command(
         port,
-        "/materials/instantiate",
         _mutation(
             "instantiate_material",
             f"instantiate:{name}",
             {"registry_class": FLOW_PLATE_TEMPLATE_NAME, "name": name},
         ),
     )
-    root = next(node for node in result["data"]["nodes"] if node["material"]["parent_material_uuid"] is None)
-    return str(root["material"]["material_uuid"])
+    return str(result["result"]["data"]["root_material_uuid"])
 
 
-def inbound_water(port: int, template_uuid: str, quantity: float) -> dict[str, Any]:
-    """「入库 → 按量登记」/「补料」：向固定 lot 追加数量（同一 lot 重复入库累加）。"""
+def inbound_water(port: int, template_uuid: str, quantity: float, *, step: str) -> dict[str, Any]:
+    """「入库 → 按量登记」/「补料」：V1 ``inventory.inbound``（kind=lot）向固定 lot 追加数量。
 
-    result = _api_request(
+    同一 lot 重复入库累加；``step``（initial / restock）区分两次入库，命令 id 按它固定。
+    """
+
+    inventory_command(
         port,
-        "/materials/lots/inbound",
-        _mutation(
-            "inbound_inventory_lot",
-            f"inbound:{WATER_LOT_UUID}:{uuid4()}",
-            # 权威把 payload 与类型化请求体逐字段比对，InventoryLotInbound 的字段要给全
-            {
-                "lot_uuid": WATER_LOT_UUID,
-                "template_uuid": template_uuid,
+        {
+            "command_id": _command_id("inbound", WATER_LOT_UUID, step),
+            "type": "inventory.inbound",
+            "actor": OPERATOR,
+            "payload": {
+                "kind": "lot",
+                "lot_id": WATER_LOT_UUID,
+                "template_id": template_uuid,
                 "batch_no": "demo-water",
                 "unit": WATER_UNIT,
                 "quantity": float(quantity),
-                "expiry_at_ms": None,
             },
-        ),
+        },
     )
     return lot_view(port)
 
 
 def lot_view(port: int) -> dict[str, Any]:
-    lot = _api_request(port, f"/materials/lots/{WATER_LOT_UUID}")
+    lot = _api_request(port, f"/inventory/lots/{WATER_LOT_UUID}")
     return {
         "lot_uuid": lot["lot_uuid"],
         "quantity_total": float(lot["quantity_total"]),
@@ -637,7 +683,7 @@ def lot_view(port: int) -> dict[str, Any]:
 def plate_states(port: int, plates: dict[str, str]) -> dict[str, dict[str, Any]]:
     states: dict[str, dict[str, Any]] = {}
     for name, material_uuid in plates.items():
-        aggregate = _api_request(port, f"/materials/instances/{material_uuid}")["material"]
+        aggregate = _api_request(port, f"/inventory/instances/{material_uuid}")["material"]
         states[name] = {
             "material_uuid": material_uuid,
             "lifecycle_status": aggregate["lifecycle_status"],
@@ -704,10 +750,10 @@ def flow_precheck(port: int, templates: dict[str, str]) -> dict[str, Any]:
     """提交前的客户端预检（OpenLab 画布 dry-run 的等价物）：只提示，不阻断。"""
 
     lots = _api_request(
-        port, f"/materials/lots?template_uuid={templates[WATER_TEMPLATE_NAME]}&unit={WATER_UNIT}"
-    )
+        port, f"/inventory/lots?template_uuid={templates[WATER_TEMPLATE_NAME]}&unit={WATER_UNIT}"
+    )["lots"]
     available = sum(float(lot["quantity_available"]) for lot in lots if not lot.get("quarantined"))
-    roots = _api_request(port, "/materials/instances?roots_only=true")
+    roots = _api_request(port, "/inventory/instances?roots_only=true")["instances"]
     plates = [
         item
         for item in roots
@@ -725,7 +771,7 @@ def flow_precheck(port: int, templates: dict[str, str]) -> dict[str, Any]:
 def deck_occupancy(port: int) -> dict[str, str]:
     """按名字从权威取台面（工作流也只知道这个名字），返回位点 -> 占用物料名。"""
 
-    matches = _api_request(port, f"/materials/instances?name={urllib.parse.quote(BENCH_DECK_NAME)}")
+    matches = _api_request(port, f"/inventory/instances?name={urllib.parse.quote(BENCH_DECK_NAME)}")["instances"]
     if not matches:
         raise RuntimeError(f"权威中没有台面 {BENCH_DECK_NAME!r}")
     deck = matches[0]
@@ -733,7 +779,7 @@ def deck_occupancy(port: int) -> dict[str, str]:
     for site in sorted(deck["sites"], key=lambda item: int(item["site_index"])):
         occupant = ""
         if site.get("occupied_material_uuid"):
-            occupant = _api_request(port, f"/materials/instances/{site['occupied_material_uuid']}")["material"]["name"]
+            occupant = _api_request(port, f"/inventory/instances/{site['occupied_material_uuid']}")["material"]["name"]
         occupancy[site["label"]] = occupant
     return occupancy
 
@@ -750,7 +796,7 @@ def run_flow_task(port: int, workflow_uuid: str, plates: dict[str, str], deadlin
         status = str(final.get("status") or "")
         if status in {"succeeded", "failed"}:
             break
-        held = [item for item in _api_request(port, "/error-decisions")["items"] if item.get("task_id") == task_uuid]
+        held = [item for item in _api_request(port, "/error-decisions")["decisions"] if item.get("task_id") == task_uuid]
         if held:
             raise AssertionError(f"任务的 attempt 进入了错误决策链: {held[0]}")
         time.sleep(0.3)
@@ -773,7 +819,7 @@ def run_flow_task(port: int, workflow_uuid: str, plates: dict[str, str], deadlin
     )
     reservations = [
         {"reservation_uuid": item["reservation_uuid"], "job_uuid": item["job_uuid"], "status": item["status"]}
-        for item in _api_request(port, f"/materials/reservations?task_uuid={task_uuid}")
+        for item in _api_request(port, f"/inventory/reservations?task_uuid={task_uuid}")["reservations"]
     ]
     return {
         "task_uuid": task_uuid,
@@ -792,7 +838,7 @@ def run_material_flow_stage(port: int, deadline: float) -> dict[str, Any]:
 
     templates = flow_templates(port)
     plates = {name: instantiate_plate(port, name) for name in FLOW_PLATE_NAMES}
-    lot_initial = inbound_water(port, templates[WATER_TEMPLATE_NAME], INITIAL_WATER_UL)
+    lot_initial = inbound_water(port, templates[WATER_TEMPLATE_NAME], INITIAL_WATER_UL, step="initial")
     workflow = upload_flow_workflow(port, templates)
     bootstrap = {
         "templates": templates,
@@ -809,7 +855,7 @@ def run_material_flow_stage(port: int, deadline: float) -> dict[str, Any]:
     failed = run_flow_task(port, workflow["workflow_uuid"], plates, deadline)
     assert_flow_failed_run(failed)
 
-    restock = {"lot": inbound_water(port, templates[WATER_TEMPLATE_NAME], RESTOCK_WATER_UL)}
+    restock = {"lot": inbound_water(port, templates[WATER_TEMPLATE_NAME], RESTOCK_WATER_UL, step="restock")}
     assert_flow_restock(restock)
 
     succeeded = run_flow_task(port, workflow["workflow_uuid"], plates, deadline)
