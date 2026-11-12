@@ -154,8 +154,11 @@ python -m unilabos --backend hostlink --skip_env_check --is_slave \
   --devices ./materials_demo --external_devices_only \
   --visual disable --disable_browser \
   --host_node_ip 127.0.0.1 --hostlink_port 18010 \
+  --server_database_root ./slave-data \
   -g ./graph/slave.json
 ```
+
+On one machine the slave needs its own data directory (`--server_database_root`): one instance owns one database root, and a second instance on the same root exits with code 73.
 
 For `ros2` mode replace `--backend hostlink` with `--backend ros2` on both
 sides and share a `ROS_DOMAIN_ID`; the HostLink flags stay — they carry the
