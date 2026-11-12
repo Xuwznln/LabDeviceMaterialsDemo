@@ -56,8 +56,23 @@ split: a plate can be tracked by quantity (bulk) and a reagent bottle per item
 
 ## Install from GitHub
 
+Requires the unified Uni-Lab-OS core (dev architecture with the V1.0 HTTP API) on
+**CPython 3.14**, plus its companion wheels: the maintained PyLabRobot fork
+`1.0.0b1+unilabos…` and `opentrons-shared-data 10.1.0+unilabos.np2.1`. Build them with the
+core's `scripts/build_wheel_release.py --dependencies-only` and install with `--find-links`.
+ROS 2 runs use RoboStack Jazzy built for cp314 (`ros2-distro-mutex` 0.20).
+
+With a Host running (`unilab --backend hostlink`), install through its management API. The
+spec is the GitHub URL with an optional `@<commit-sha>`:
+
 ```bash
-unilab package install https://github.com/Xuwznln/LabDeviceMaterialsDemo --ref <commit-sha>
+unilab package install https://github.com/Xuwznln/LabDeviceMaterialsDemo@<commit-sha> --wait
+```
+
+Or install the distribution into the current Python environment (this is what CI does):
+
+```bash
+python -m pip install "git+https://github.com/Xuwznln/LabDeviceMaterialsDemo@<commit-sha>"
 ```
 
 For local development:
