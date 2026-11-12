@@ -238,6 +238,7 @@ def demo_tips_24(name: str) -> TipRack:
         model="demo_tips_24",
         ordered_items=create_ordered_items_2d(
             TipSpot,
+            name_prefix=name,
             num_items_x=6,
             num_items_y=4,
             dx=9.0,
@@ -248,10 +249,14 @@ def demo_tips_24(name: str) -> TipRack:
             size_x=14.0,
             size_y=14.0,
             size_z=0.0,
-            make_tip=lambda: Tip(
+            # PLR 1.0：TipSpot 以枪头名调用 make_tip(name)；Tip 用 diameter / size_z 描述几何
+            # （取代旧的 total_tip_length）。直径为演示值，非实测。
+            make_tip=lambda tip_name: Tip(
+                name=tip_name,
+                diameter=7.0,
+                size_z=60.0,
                 has_filter=False,
                 maximal_volume=300.0,
-                total_tip_length=60.0,
                 fitting_depth=51.0,
             ),
         ),
@@ -274,6 +279,7 @@ def demo_plate_12(name: str) -> Plate:
         model="demo_plate_12",
         ordered_items=create_ordered_items_2d(
             Well,
+            name_prefix=name,
             num_items_x=4,
             num_items_y=3,
             dx=12.0,
@@ -305,6 +311,7 @@ def demo_plate_24(name: str) -> Plate:
         model=FLOW_PLATE_TEMPLATE_NAME,
         ordered_items=create_ordered_items_2d(
             Well,
+            name_prefix=name,
             num_items_x=6,
             num_items_y=4,
             dx=9.0,

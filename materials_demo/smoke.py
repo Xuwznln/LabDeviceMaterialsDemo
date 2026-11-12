@@ -174,11 +174,12 @@ def assert_material_loop_workflow(workflow_proof: dict[str, Any]) -> None:
     assert relocated["instance_rebuilt"] is True
     assert relocated["sites"]["T2"] == "" and relocated["sites"]["T3"] == ROUND1_PLATE
 
-    # 5) 删除：权威递归删除整棵树（根 + 24 个枪头位）并自动释放位点
+    # 5) 删除：权威递归删除整棵树（根 + 24 个枪头位 + 24 支具名枪头）并自动释放位点。
+    # PLR 1.0 的具名枪头是枪头位的结构子物料，与枪头位一同入库、一同删除。
     assert disposed["deleted_in_authority"] is True
     assert disposed["tips_uuid"] == provisioned["tips_uuid"]
     assert disposed["root_removed"] is True
-    assert disposed["removed_count"] == 25, disposed
+    assert disposed["removed_count"] == 1 + 24 + 24, disposed
     assert disposed["sites"]["T1"] == "", disposed
 
     # 6) 终态报告：只剩 T3 上的第一轮孔板，孔位内容物齐全
