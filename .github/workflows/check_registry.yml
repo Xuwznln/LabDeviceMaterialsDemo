@@ -17,7 +17,9 @@ on:
         type: string
 
 env:
-  STABLE_CORE_REF: bbee08f31fc6a2bbda22d71c7c34135a89fa2dd6
+  # 统一 Core（dev 架构 + V1.0 HTTP API，仅 CPython 3.14；ROS 2 Jazzy 来自 RoboStack mutex 0.20）。
+  # 管理 API 一律 {code, data} 信封，写请求带 X-UniLab-Token；物料读写走 /api/v1/inventory/*。
+  STABLE_CORE_REF: 09e5ac28a7564b07a0490624dae7bd20b905a37d
 
 jobs:
   prepare:
@@ -87,7 +89,7 @@ jobs:
         with:
           miniforge-version: latest
           use-mamba: true
-          python-version: '3.12.13'
+          python-version: '3.14.10'
           channels: conda-forge,robostack-jazzy
           channel-priority: strict
           activate-environment: unilab
@@ -98,7 +100,7 @@ jobs:
         run: |
           mamba install -n unilab --override-channels -c conda-forge -c robostack-jazzy \
             conda-forge::numpy=2 conda-forge::uv conda-forge::colcon-common-extensions \
-            robostack-jazzy::ros2-distro-mutex=0.15 robostack-jazzy::ros-jazzy-ros-core \
+            robostack-jazzy::ros2-distro-mutex=0.20 robostack-jazzy::ros-jazzy-ros-core \
             robostack-jazzy::ros-jazzy-action-msgs robostack-jazzy::ros-jazzy-std-msgs \
             robostack-jazzy::ros-jazzy-geometry-msgs robostack-jazzy::ros-jazzy-control-msgs \
             robostack-jazzy::ros-jazzy-nav2-msgs robostack-jazzy::ros-jazzy-moveit-msgs \
@@ -112,24 +114,20 @@ jobs:
             --build-base .ci/build/unilabos_msgs \
             --install-base .ci/install/unilabos_msgs \
             --merge-install --packages-select unilabos_msgs \
-            --cmake-args -DBUILD_TESTING=OFF
+            --cmake-args -DBUILD_TESTING=OFF -DPython3_EXECUTABLE="$CONDA_PREFIX/bin/python"
           source .ci/install/unilabos_msgs/setup.bash
-          # PyLabRobot fork 与 opentrons-shared-data（numpy2 补丁）是配套 wheel，不在 PyPI：
-          # 按所选 Core 的 recipes/wheels.toml 从各自上游源码构建，再经 --find-links 安装，
-          # 与 Uni-Lab-OS 自身 CI 的安装路径一致。没有该脚本的旧 Core 回退到 git 安装 PLR。
-          companion=()
-          if [[ -f .ci/unilabos/scripts/build_wheel_release.py ]]; then
-            python .ci/unilabos/scripts/build_wheel_release.py --dependencies-only \
-              --output-dir "$RUNNER_TEMP/unilab-companion-wheels" \
-              --source-cache "$RUNNER_TEMP/unilab-companion-sources"
-            companion=(--find-links "$RUNNER_TEMP/unilab-companion-wheels/wheelhouse")
-          else
-            uv pip install git+https://github.com/Xuwznln/pylabrobot.git@6285d662effa972be97a781ba7493553f2ba94ee
-          fi
+          # PyLabRobot fork（1.0.0b1+unilabos）与 opentrons-shared-data（numpy2 补丁）是配套 wheel，
+          # 不在 PyPI：按所选 Core 的 recipes/wheels.toml 从锁定源码构建，再经 --find-links 安装，
+          # 与 Uni-Lab-OS 自身 CI 的安装路径一致。
+          python .ci/unilabos/scripts/build_wheel_release.py --dependencies-only \
+            --output-dir "$RUNNER_TEMP/unilab-companion-wheels" \
+            --source-cache "$RUNNER_TEMP/unilab-companion-sources"
+          companion=(--find-links "$RUNNER_TEMP/unilab-companion-wheels/wheelhouse")
           uv pip install "${companion[@]}" -r .ci/unilabos/unilabos/utils/requirements.txt
           uv pip install "${companion[@]}" pywinauto pytest -e .ci/unilabos
-          UNILABOS_BASICCONFIG_BACKEND=hostlink \
-            unilab package install "git+https://github.com/$DEMO_REPOSITORY@$DEMO_REF"
+          # 统一 Core 的 `unilab package install` 经管理 API 交给运行中的 Host 安装；CI 没有常驻 Host，
+          # 直接把 GitHub 上的同一提交装进环境（下方断言它不是从工作区导入的）。
+          uv pip install "git+https://github.com/$DEMO_REPOSITORY@$DEMO_REF"
           cd "$RUNNER_TEMP"
           python - <<'PY'
           import importlib.metadata

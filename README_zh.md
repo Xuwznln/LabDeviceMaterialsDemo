@@ -45,8 +45,21 @@
 
 ## 从 GitHub 安装
 
+需要统一版 Uni-Lab-OS 核心（dev 架构 + V1.0 HTTP API），仅支持 **CPython 3.14**；配套 wheel
+（PyLabRobot 维护分支 `1.0.0b1+unilabos…` 与 `opentrons-shared-data 10.1.0+unilabos.np2.1`）
+用核心的 `scripts/build_wheel_release.py --dependencies-only` 构建，安装时经 `--find-links` 提供。
+ROS 2 运行使用为 cp314 构建的 RoboStack Jazzy（`ros2-distro-mutex` 0.20）。
+
+Host 运行时（`unilab --backend hostlink`）经管理 API 安装，来源是 GitHub 地址，可附 `@<commit-sha>`：
+
 ```bash
-unilab package install https://github.com/Xuwznln/LabDeviceMaterialsDemo --ref <commit-sha>
+unilab package install https://github.com/Xuwznln/LabDeviceMaterialsDemo@<commit-sha> --wait
+```
+
+也可以直接装进当前 Python 环境（CI 即如此）：
+
+```bash
+python -m pip install "git+https://github.com/Xuwznln/LabDeviceMaterialsDemo@<commit-sha>"
 ```
 
 本地开发可使用：
