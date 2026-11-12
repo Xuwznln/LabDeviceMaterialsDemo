@@ -126,8 +126,11 @@ python -m unilabos --backend hostlink --skip_env_check --is_slave \
   --devices ./materials_demo --external_devices_only \
   --visual disable --disable_browser \
   --host_node_ip 127.0.0.1 --hostlink_port 18010 \
+  --server_database_root ./slave-data \
   -g ./graph/slave.json
 ```
+
+同一台机器上 slave 必须用自己的数据目录（`--server_database_root`）：一个数据库根目录只能由一个实例占用，第二个实例启动即以退出码 73 失败。
 
 `ros2` 模式把两侧 `--backend hostlink` 换成 `--backend ros2` 并共享
 `ROS_DOMAIN_ID`；HostLink 参数保留——它承载物料链路。
