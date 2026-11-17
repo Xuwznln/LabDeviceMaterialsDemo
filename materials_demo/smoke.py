@@ -354,6 +354,12 @@ class ApiError(RuntimeError):
         self.body = body
 
 
+def _label(material: dict[str, Any]) -> str:
+    """物料给人看的名字：核心把 name 改成 uuid 后读 display_name，旧核心没填时退回 name。"""
+
+    return str(material.get("display_name") or material.get("name") or "")
+
+
 def _is_envelope(body: Any) -> bool:
     """V1 信封 ``{code, data?, error?}``；裸的库存命令结果另带 ``command_id`` / ``status``，不算。"""
 
@@ -536,7 +542,7 @@ def read_authority_final_state(management_port: int) -> dict[str, Any]:
     deck = by_uuid[DECK_UUID]
     site_occupancy = {
         site["label"]: (
-            by_uuid[site["occupied_material_uuid"]]["material"]["name"]
+            _label(by_uuid[site["occupied_material_uuid"]]["material"])
             if site.get("occupied_material_uuid")
             else ""
         )
@@ -548,7 +554,7 @@ def read_authority_final_state(management_port: int) -> dict[str, Any]:
             {node["material"]["config"]["type"] for node in nodes}
         ),
         "root_children": sorted(
-            node["material"]["name"]
+            _label(node["material"])
             for node in nodes
             if node["material"]["parent_material_uuid"] == DECK_UUID
         ),
@@ -788,7 +794,7 @@ def deck_occupancy(port: int) -> dict[str, str]:
     for site in sorted(deck["sites"], key=lambda item: int(item["site_index"])):
         occupant = ""
         if site.get("occupied_material_uuid"):
-            occupant = _api_request(port, f"/inventory/instances/{site['occupied_material_uuid']}")["material"]["name"]
+            occupant = _label(_api_request(port, f"/inventory/instances/{site['occupied_material_uuid']}")["material"])
         occupancy[site["label"]] = occupant
     return occupancy
 
