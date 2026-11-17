@@ -38,9 +38,9 @@ from unilabos.protocol.materials import (
 
 
 def _label(material: Any) -> str:
-    """物料给人看的名字：核心把 name 改成 uuid 后读 display_name，旧核心没填时退回 name。"""
+    """物料给人看的名字（``name`` 是物料 uuid）。"""
 
-    return str(getattr(material, "display_name", "") or getattr(material, "name", "") or "")
+    return str(material.display_name)
 
 #: 样品物料的模板名（rack 模板由注册表自动同步，样品模板由设备自行确保）。
 SAMPLE_TEMPLATE_NAME = "materials_demo_sample"

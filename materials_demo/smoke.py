@@ -40,8 +40,8 @@
 
 失败后是**新任务**而不是原任务重试：``plan_not_executable`` 是终态，补料后重新提交。
 
-管理 API 走 V1 合同：除 ``/health`` 外都是 ``{"code": 0, "data": ...}`` 信封（较早的核心里
-``POST /inventory/commands`` 返回裸结果 ``{command_id, status, result | error, ...}``，两种都认）；库存读在
+管理 API 走 V1 合同：全部 JSON 路由（含 ``/health`` 与 ``POST /inventory/commands``）都是
+``{"code": 0, "data": ...}`` 信封；库存读在
 ``/inventory/{templates,lots,instances,reservations}``（具名数组），dev 独有的
 ``/materials/instances/by-resource-id/{id}`` 与 ``/materials/instances/{uuid}/tree`` 不变；写操作一律
 带 ``X-UniLab-Token``。
@@ -355,13 +355,13 @@ class ApiError(RuntimeError):
 
 
 def _label(material: dict[str, Any]) -> str:
-    """物料给人看的名字：核心把 name 改成 uuid 后读 display_name，旧核心没填时退回 name。"""
+    """物料给人看的名字（``name`` 是物料 uuid）。"""
 
-    return str(material.get("display_name") or material.get("name") or "")
+    return str(material["display_name"])
 
 
 def _is_envelope(body: Any) -> bool:
-    """V1 信封 ``{code, data?, error?}``；裸的库存命令结果另带 ``command_id`` / ``status``，不算。"""
+    """V1 信封 ``{code, data?, error?}``。"""
 
     return isinstance(body, dict) and "code" in body and set(body) <= {"code", "data", "error"}
 
@@ -376,8 +376,7 @@ def _api_request(
     raw: bool = False,
 ) -> Any:
     """请求管理 API；V1 信封 ``{"code":0,"data":...}``（无数据的命令只有 ``{"code":0}``）自动解包，
-    业务码非 0 抛错。``raw=True`` 原样返回：较早核心里 ``POST /inventory/commands`` 的裸结果在拒绝时也带
-    ``code`` / ``error``，不能当信封解。``/health`` 不包信封，按原样返回。"""
+    业务码非 0 抛错。``raw=True`` 原样返回整个信封（库存命令被拒时要读 ``error``）。"""
 
     url = f"http://127.0.0.1:{port}/api/v1{path}"
     data = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -592,14 +591,12 @@ def _command_id(*parts: str) -> str:
 def inventory_command(port: int, command: dict[str, Any]) -> dict[str, Any]:
     """``POST /inventory/commands``：库存写入的唯一入口。
 
-    当前核心与其它路由一样包 V1 信封：完成为 ``{"code": 0, "data": {command_id, status, result, replayed}}``，
-    被拒为 HTTP 200 + ``{"code": <业务码>, "error": {...}}``。较早的核心返回裸结果
-    ``{command_id, status, result | error, error_code, replayed}``。两种都按 ``status`` 判断成败，
-    没完成就抛出，消息里带原始响应。
+    与其它路由一样包 V1 信封：完成为 ``{"code": 0, "data": {command_id, status, result, replayed}}``，
+    被拒为 HTTP 200 + ``{"code": <业务码>, "error": {...}}``；没完成就抛出，消息里带原始响应。
     """
 
     body = _api_request(port, "/inventory/commands", command, raw=True)
-    result = body.get("data") if _is_envelope(body) else body
+    result = body.get("data") if _is_envelope(body) and body.get("code") == 0 else body
     if not isinstance(result, dict) or result.get("status") != "completed":
         kind = command.get("type") or command.get("operation")
         raise RuntimeError(f"库存命令 {kind} 未完成: {result}")

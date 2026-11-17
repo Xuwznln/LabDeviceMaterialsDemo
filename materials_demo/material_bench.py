@@ -40,9 +40,9 @@ from .material_flow_graph import WATER_UNIT
 
 
 def _label(material: Any) -> str:
-    """物料给人看的名字：核心把 name 改成 uuid 后读 display_name，旧核心没填时退回 name。"""
+    """物料给人看的名字（``name`` 是物料 uuid）。"""
 
-    return str(getattr(material, "display_name", "") or getattr(material, "name", "") or "")
+    return str(material.display_name)
 
 #: 台面 Deck 的固定 uuid：图 config 与 smoke 断言共享同一出处。
 DEFAULT_DECK_UUID = "9d2c7e40-5b1a-4f76-a3c8-000000003001"
@@ -468,8 +468,8 @@ class MaterialBenchDemo:
         for node in tree.nodes:
             parent_uuid = node.material.parent_material_uuid
             if parent_uuid in plates and node.data.substances:
-                # 新核心里孔的显示名就是孔位标识（"A1"）；旧核心的显示名等于带板名前缀的 name
-                label = _label(node.material).rsplit("_", 1)[-1]
+                # 孔的显示名就是孔位标识（"A1"）
+                label = _label(node.material)
                 wells.setdefault(plates[parent_uuid], {})[label] = [
                     [entry.name, float(entry.quantity), entry.quantity_unit]
                     for entry in node.data.substances
