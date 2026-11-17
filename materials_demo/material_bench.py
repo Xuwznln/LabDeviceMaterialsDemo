@@ -38,6 +38,12 @@ from unilabos.registry.placeholder_type import SiteSlot
 from .labware import BENCH_SITE_LAYOUT, build_bench_deck, demo_plate_12, site_occupant
 from .material_flow_graph import WATER_UNIT
 
+
+def _label(material: Any) -> str:
+    """物料给人看的名字（``name`` 是物料 uuid）。"""
+
+    return str(material.display_name)
+
 #: 台面 Deck 的固定 uuid：图 config 与 smoke 断言共享同一出处。
 DEFAULT_DECK_UUID = "9d2c7e40-5b1a-4f76-a3c8-000000003001"
 
@@ -116,9 +122,9 @@ class MaterialBenchDemo:
         for site in sorted(deck.sites, key=lambda item: int(item.site_index)):
             name = ""
             if site.occupied_material_uuid:
-                name = gateway.get_material(
+                name = _label(gateway.get_material(
                     site.occupied_material_uuid
-                ).material.name
+                ).material)
             occupancy[site.label] = name
         return occupancy
 
@@ -455,14 +461,15 @@ class MaterialBenchDemo:
         tree = gateway.get_tree(self.deck_uuid)
         wells: Dict[str, Dict[str, List[List[Any]]]] = {}
         plates = {
-            node.material.material_uuid: node.material.name
+            node.material.material_uuid: _label(node.material)
             for node in tree.nodes
             if node.material.class_name == "Plate"
         }
         for node in tree.nodes:
             parent_uuid = node.material.parent_material_uuid
             if parent_uuid in plates and node.data.substances:
-                label = node.material.name.rsplit("_", 1)[-1]
+                # 孔的显示名就是孔位标识（"A1"）
+                label = _label(node.material)
                 wells.setdefault(plates[parent_uuid], {})[label] = [
                     [entry.name, float(entry.quantity), entry.quantity_unit]
                     for entry in node.data.substances
