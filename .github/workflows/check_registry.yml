@@ -18,7 +18,7 @@ on:
 
 env:
   # 统一 Core（dev 架构 + V1.0 HTTP API，仅 CPython 3.14；ROS 2 Jazzy 来自 RoboStack mutex 0.20）。
-  # 管理 API 一律 {code, data} 信封，写请求带 X-UniLab-Token；物料读写走 /api/v1/inventory/*。
+  # 管理 API 一律 {code, data} 信封，写请求不需要 token；物料读写走 /api/v1/inventory/*。
   STABLE_CORE_REF: 0c0e679e860fffe0c1f0df59d1c62777ef257a20
 
 jobs:
