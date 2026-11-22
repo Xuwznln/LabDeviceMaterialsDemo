@@ -5,9 +5,11 @@
 1. ``@device(available_sites=RACK_SITES)`` 声明固定位点，AST 扫描进注册表；
 2. host 启动时注册表同步为微后端资源模板，图中 rack 物料按模板/图落库，
    每个位点获得权威 uuid 与 ``occupied_material_uuid`` 占用字段；
-3. 设备动作通过 materials gateway 核对位点定义（verify_site_definition）、读取自身位点
-   快照（inspect_sites）、创建样品并放入位点（load_sample）、在位点间转移
-   （transfer_sample）——所有占用状态都由微后端权威维护，设备内存不持有副本。
+3. 设备动作读权威核对位点定义（verify_site_definition）、读取自身位点快照（inspect_sites）；
+   样品是注册过的 PLR 物料（``labware.materials_demo_sample``），load_sample 经 client 物料服务
+   创建并原子地放进位点（``materials.create(..., node=, site=)``），transfer_sample 经
+   ``materials.assign(..., site=)`` 在自己的位点间换位——占用状态都由微后端权威维护，设备
+   本地持有同一份 PLR 实例（uuid ↔ 实例），重启时按 PLR 反序列化挂回。
 
 设备启动后不自跑任何动作：「核对声明 -> 装载 A1 -> 转移到 B2 -> 复查」闭环由
 ``workflows.py`` 的 @workflow 经管理 API 触发，断言只看各节点返回值。
@@ -16,7 +18,6 @@
 import logging
 import time
 from typing import Any, Dict, List, Optional
-from uuid import uuid4
 
 from unilabos.registry.decorators import action, device, not_action, topic_config
 from unilabos.registry.placeholder_type import SiteSlot
@@ -26,15 +27,8 @@ from unilabos.resources.objects.pose import (
     ResourceDictPositionSize,
 )
 from unilabos.resources.objects.site import SiteDefinition
-from unilabos.protocol.materials import (
-    InventoryMutation,
-    MaterialDataWrite,
-    MaterialIdentityWrite,
-    MaterialMove,
-    MaterialNodeCreate,
-    MaterialTreeCreate,
-    ResourceTemplateWrite,
-)
+
+from .labware import DEMO_SAMPLE_TEMPLATE_NAME, materials_demo_sample
 
 
 def _label(material: Any) -> str:
@@ -42,8 +36,8 @@ def _label(material: Any) -> str:
 
     return str(material.display_name)
 
-#: 样品物料的模板名（rack 模板由注册表自动同步，样品模板由设备自行确保）。
-SAMPLE_TEMPLATE_NAME = "materials_demo_sample"
+#: 样品的注册表名（也是资源模板名）：注册在 labware.materials_demo_sample，随注册表同步成模板。
+SAMPLE_TEMPLATE_NAME = DEMO_SAMPLE_TEMPLATE_NAME
 
 
 #: 2x2 网格的四个固定位点；图与断言共享同一出处。
@@ -130,7 +124,6 @@ class SampleRackDemo:
         self.device_id = device_id or "sample_rack_demo"
         self.logger = logging.getLogger(f"SampleRack.{self.device_id}")
         self._start_time = time.time()
-        self._template_ready = False
 
     @not_action
     def post_init(self, node: Any) -> None:
@@ -152,17 +145,6 @@ class SampleRackDemo:
         return resolve_materials_gateway()
 
     @not_action
-    def _mutation(self, operation: str, effect_key: str) -> InventoryMutation:
-        return InventoryMutation(
-            command_uuid=str(uuid4()),
-            effect_key=effect_key,
-            operation=operation,
-            actor_type="virtual_device",
-            actor_uuid=self.device_id,
-            observed_at_ms=int(time.time() * 1000),
-        )
-
-    @not_action
     def _rack(self) -> Any:
         """读取自身权威物料聚合（图 ensure 后即存在，含全部位点）。"""
 
@@ -181,27 +163,6 @@ class SampleRackDemo:
         raise ValueError(
             f"位点 {selector!r} 不存在，可用: {[site.label for site in rack.sites]}"
         )
-
-    @not_action
-    def _ensure_sample_template(self) -> None:
-        if self._template_ready:
-            return
-        gateway = self._gateway()
-        if not any(
-            template.name == SAMPLE_TEMPLATE_NAME
-            for template in gateway.list_templates()
-        ):
-            gateway.create_template(
-                self._mutation("put_template", f"ensure-template:{SAMPLE_TEMPLATE_NAME}"),
-                ResourceTemplateWrite(
-                    name=SAMPLE_TEMPLATE_NAME,
-                    display_name="演示样品",
-                    class_name="Resource",
-                    category=["demo_sample"],
-                    definition={"demo": "site-show", "schema_version": 1},
-                ),
-            )
-        self._template_ready = True
 
     @not_action
     def _sample_by_resource_id(self, resource_id: str) -> Any | None:
@@ -259,7 +220,7 @@ class SampleRackDemo:
 
     @action(
         display_name="装载样品",
-        description="创建（或复用）样品物料并放入指定位点；位点被他人占用则报错",
+        description="按注册表创建（或复用）样品物料并放入指定位点；位点被他人占用则报错",
         always_free=True,
         feedback_interval=1.0,
     )
@@ -273,54 +234,28 @@ class SampleRackDemo:
                 的 uuid；工作流/脚本可直接传 label 便捷形态（如 "A2"）。
             sample_name[样品名]: 样品物料的 resource_id / 展示名，重复调用复用同名物料。
         """
-        gateway = self._gateway()
+        from unilabos.resources import materials
+
         rack = self._rack()
         resolved = self._resolve_site(rack, site)
-
-        self._ensure_sample_template()
         sample = self._sample_by_resource_id(sample_name)
         if sample is None:
-            created = gateway.create_tree(
-                self._mutation(
-                    "create_material_tree", f"create-sample:{sample_name}"
-                ),
-                MaterialTreeCreate(
-                    nodes=[
-                        MaterialNodeCreate(
-                            client_ref="sample",
-                            identity=MaterialIdentityWrite(
-                                resource_id=sample_name,
-                                name=sample_name,
-                                description="site-show 演示样品",
-                                resource_type="resource",
-                                class_name="Resource",
-                                template_name=SAMPLE_TEMPLATE_NAME,
-                                meta_data={"demo": "site-show"},
-                            ),
-                            data=MaterialDataWrite(
-                                data={},
-                                sites_initialized=True,
-                                state_status="ready",
-                            ),
-                        )
-                    ]
-                ),
+            if resolved.occupied_material_uuid is not None:
+                raise ValueError(f"位点 {resolved.label} 已被占用")
+            # 注册过的 PLR 样品：建树与占用位点在权威的同一事务里提交，本地挂上同一份实例
+            created = materials.create(
+                materials_demo_sample(sample_name),
+                node=self._device_node,
+                site=resolved.site_uuid,
+                display_name=sample_name,
             )
-            sample = created.data.nodes[0]
-        sample_uuid = sample.material.material_uuid
-
-        if resolved.occupied_material_uuid not in (None, sample_uuid):
-            raise ValueError(f"位点 {resolved.label} 已被占用")
-        if resolved.occupied_material_uuid != sample_uuid:
-            gateway.move_material(
-                self._mutation(
-                    "move_material", f"load:{sample_name}->{resolved.label}"
-                ),
-                MaterialMove(
-                    material_uuid=sample_uuid,
-                    destination_site_uuid=resolved.site_uuid,
-                ),
-            )
+            sample_uuid = str(created.unilabos_uuid)
+        else:
+            sample_uuid = sample.material.material_uuid
+            if resolved.occupied_material_uuid not in (None, sample_uuid):
+                raise ValueError(f"位点 {resolved.label} 已被占用")
+            if resolved.occupied_material_uuid != sample_uuid:
+                materials.assign(self._device_node, sample_uuid, site=resolved.site_uuid)
         self.logger.info(f"[SampleRack] 样品 {sample_name} 已装载到 {resolved.label}")
         return {
             "success": True,
@@ -344,7 +279,8 @@ class SampleRackDemo:
             from_label[来源位点]: 样品当前所在位点的 label（如 "A1"），必须已有样品。
             to_label[目标位点]: 样品要转移到的位点 label（如 "B2"），必须为空。
         """
-        gateway = self._gateway()
+        from unilabos.resources import materials
+
         rack = self._rack()
         source = self._resolve_site(rack, from_label)
         destination = self._resolve_site(rack, to_label)
@@ -355,16 +291,9 @@ class SampleRackDemo:
             raise ValueError(f"位点 {to_label} 已被占用")
 
         sample_uuid = str(source.occupied_material_uuid)
-        sample_name = _label(gateway.get_material(sample_uuid).material)
-        gateway.move_material(
-            self._mutation(
-                "move_material", f"transfer:{from_label}->{to_label}"
-            ),
-            MaterialMove(
-                material_uuid=sample_uuid,
-                destination_site_uuid=destination.site_uuid,
-            ),
-        )
+        sample_name = _label(self._gateway().get_material(sample_uuid).material)
+        # 本设备位点间换位：本地是同一份实例，权威 move 换占用
+        materials.assign(self._device_node, sample_uuid, site=destination.site_uuid)
         self.logger.info(
             f"[SampleRack] 样品 {sample_name} 已从 {from_label} 转移到 {to_label}"
         )

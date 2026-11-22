@@ -48,7 +48,14 @@ reaches the host's materials authority through HostLink.
 - `demo_reagent_water` — water, registered **by quantity** in stage 3
   (`POST /api/v1/inventory/commands`, `inventory.inbound` with `kind: lot`;
   lots under the template, unit ul), reserved
-  and deducted by the workflow's `lot` requirement.
+  and deducted by the workflow's `lot` requirement;
+- `materials_demo_sample` — the sample on the host-side `sample_rack` (a PLR
+  `Container`). `load_sample` creates it with `materials.create(..., node=,
+  site=)`: the tree and the site occupancy are committed in one authority
+  transaction and the rack holds the same PLR instance; `transfer_sample`
+  moves it between the rack's own sites with `materials.assign(..., site=)`.
+  Device subtrees only accept registered PLR materials, so the rack is
+  rebuilt with its samples after a restart.
 
 Per-item vs by-quantity are two ledger shapes, not a "consumable vs reagent"
 split: a plate can be tracked by quantity (bulk) and a reagent bottle per item
@@ -230,7 +237,7 @@ graph/slave.json                   slave graph: material_bench + deck config
 materials_demo/
   sample_rack.py                   @device available_sites declaration + four site actions (incl. verify_site_definition; no self-run)
   material_bench.py                slave-side material CRUD device (seven actions; fill_well consumes the inventory allocation; no self-run)
-  labware.py                       @resource deck / tip rack / 12-well plate / 24-well plate / water
+  labware.py                       @resource deck / tip rack / 12-well plate / 24-well plate / water / rack sample
   workflows.py                     four @workflow default sub-workflows (two closed-loop rounds)
   material_flow_graph.py           stage-3 API-uploaded three-node graph + fixed identities and numbers (no unilabos import)
   smoke.py                         terminating dual-process real-runtime smoke (workflow-driven)

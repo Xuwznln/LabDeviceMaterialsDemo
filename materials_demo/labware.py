@@ -14,6 +14,9 @@
   板与 24 孔整棵树一起落权威，工作流用
   ``{"kind": "material", "template_uuid": ...}`` 声明需求，调度器从 active 实例里选一件
   交给 host_node/apply_deduct_resource 出库挂到台面；
+- ``materials_demo_sample``  样品架上的样品（PLR ``Container``，类目 ``demo_sample``）：sample_rack
+  按它创建样品并原子地放进自己的位点（materials.create(..., node=, site=)），设备重启时
+  按 PLR 反序列化挂回；设备子树只收这样登记过的 PLR 物料；
 - ``demo_reagent_water``  水。阶段三**按量**登记：以 lot 挂在模板下
   （`POST /api/v1/inventory/commands`，``inventory.inbound`` kind=lot），工作流用
   ``{"kind": "lot", "template_uuid": ..., "quantity": ..., "unit": "ul"}`` 声明需求，
@@ -343,4 +346,26 @@ def demo_reagent_water(name: str) -> Container:
         max_volume=1_000_000.0,
         category="reagent",
         model=WATER_TEMPLATE_NAME,
+    )
+
+
+#: 样品架上样品的注册表名（也是它的资源模板名）。
+DEMO_SAMPLE_TEMPLATE_NAME = "materials_demo_sample"
+
+
+@resource(
+    id="materials_demo_sample",
+    category=["demo_sample"],
+    description="样品架演示样品：PLR 容器，按注册表名创建并放进 sample_rack 的位点，设备重启时按 PLR 挂回",
+    display_name="演示样品",
+)
+def materials_demo_sample(name: str) -> Container:
+    return Container(
+        name=name,
+        size_x=40.0,
+        size_y=40.0,
+        size_z=60.0,
+        max_volume=5_000.0,
+        category="demo_sample",
+        model=DEMO_SAMPLE_TEMPLATE_NAME,
     )
