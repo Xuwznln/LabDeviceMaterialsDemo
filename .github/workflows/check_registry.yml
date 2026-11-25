@@ -19,7 +19,7 @@ on:
 env:
   # 统一 Core（dev 架构 + V1.0 HTTP API，仅 CPython 3.14；ROS 2 Jazzy 来自 RoboStack mutex 0.20）。
   # 管理 API 一律 {code, data} 信封，写请求不需要 token；物料读写走 /api/v1/inventory/*。
-  STABLE_CORE_REF: 08743f2aa9549099b18f7e53ab6036f8a2d1a85f
+  STABLE_CORE_REF: bf2381618f6c2e200380bb818eabdbcaa13986be
 
 jobs:
   prepare:
