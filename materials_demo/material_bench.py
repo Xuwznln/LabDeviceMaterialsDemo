@@ -460,10 +460,12 @@ class MaterialBenchDemo:
         gateway = self._gateway()
         tree = gateway.get_tree(self.deck_uuid)
         wells: Dict[str, Dict[str, List[List[Any]]]] = {}
+        # 按 PLR 类型（config.type）认板：class_name 记录的是初始化所用的注册表名
+        # （如 "demo_plate_12"），不是 PLR 类名。
         plates = {
             node.material.material_uuid: _label(node.material)
             for node in tree.nodes
-            if node.material.class_name == "Plate"
+            if (node.material.config or {}).get("type") == "Plate"
         }
         for node in tree.nodes:
             parent_uuid = node.material.parent_material_uuid

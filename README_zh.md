@@ -38,7 +38,11 @@
   （`POST /api/v1/inventory/commands` 的 materials.v1 `instantiate_material` 命令，每件一个 uuid，
   板与 24 孔整棵树一起落权威），由工作流的 `material` 需求选中出库；
 - `demo_reagent_water` —— 水，阶段三**按量登记**（`POST /api/v1/inventory/commands`，
-  `inventory.inbound` kind=lot，以 lot 挂在模板下，单位 ul），由工作流的 `lot` 需求预留与扣减。
+  `inventory.inbound` kind=lot，以 lot 挂在模板下，单位 ul），由工作流的 `lot` 需求预留与扣减；
+- `materials_demo_sample` —— host 侧 `sample_rack` 上的样品（PLR `Container`）。`load_sample`
+  经 `materials.create(..., node=, site=)` 创建：建树与占用位点在权威的同一事务里提交，样品架
+  本地持有同一份 PLR 实例；`transfer_sample` 经 `materials.assign(..., site=)` 在自己的位点间换位。
+  设备子树只收注册过的 PLR 物料，样品架重启后连同样品一起按 PLR 挂回。
 
 按件 / 按量是两种账目形态，与"耗材 / 试剂"无关：板也可以按量记（散装），试剂瓶也
 可以按件记（有 uuid、能放到位点）。
@@ -189,7 +193,7 @@ graph/slave.json                   slave 图：material_bench + deck 配置
 materials_demo/
   sample_rack.py                   @device available_sites 声明 + 四个位点动作（含 verify_site_definition；不自跑）
   material_bench.py                slave 侧物料 CRUD 设备（七个动作；fill_well 消费库存分配；不自跑）
-  labware.py                       @resource 台面 / 枪头盒 / 12 孔板 / 24 孔板 / 试剂水
+  labware.py                       @resource 台面 / 枪头盒 / 12 孔板 / 24 孔板 / 试剂水 / 样品架样品
   workflows.py                     四个 @workflow 默认子工作流（两轮闭环）
   material_flow_graph.py           阶段三经 API 上传的三节点图 + 固定身份与数字（不依赖 unilabos）
   smoke.py                         有终止条件的双进程真实运行时证明
